@@ -17,7 +17,7 @@ venv/
 *.log
 signals.json
 *.pid
-frontend/
+# frontend/  # Commented out to track frontend source
 .agents/
 .claude/
 .impeccable/
