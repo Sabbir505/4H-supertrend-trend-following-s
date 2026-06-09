@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class TelegramBot:
     def __init__(self, config: Config, scanner=None):
+        self.config = config
         self.token = config.telegram_token
         self.chat_id = config.telegram_chat_id
         self.base_url = f"https://api.telegram.org/bot{self.token}"

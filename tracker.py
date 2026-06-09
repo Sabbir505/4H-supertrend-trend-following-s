@@ -1,7 +1,7 @@
 """
 Signal Tracker
 - Saves every signal to signals.json
-- Monitors price every 15 min to check if TP/SL was hit
+- Monitors price every 5 min to check if TP/SL was hit
 - Sends outcome alert to Telegram when a trade closes
 """
 
@@ -181,10 +181,22 @@ class SignalTracker:
             logger.debug(f"Price fetch failed {symbol}: {e}")
             return None
 
+    def get_all_prices(self) -> dict[str, float]:
+        """Fetch all ticker prices in a single API call."""
+        try:
+            url = f"{self.base_url}/api/v3/ticker/price"
+            r = requests.get(url, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            return {item['symbol']: float(item['price']) for item in data}
+        except Exception as e:
+            logger.error(f"Bulk price fetch failed: {e}")
+            return {}
+
     # ─── Monitor Open Signals ─────────────────────────────────────────────────
 
     def check_open_signals(self):
-        """Called every 15 min — checks if any open signal hit TP or SL"""
+        """Called every 5 min — checks if any open signal hit TP or SL"""
         # Monitor OPEN signals and partial TP hits (waiting for next TP)
         open_signals = [s for s in self.signals if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')]
         if not open_signals:
@@ -192,14 +204,20 @@ class SignalTracker:
 
         logger.info(f"Monitoring {len(open_signals)} open signals...")
 
+        # Fetch all prices in a single API call
+        prices = self.get_all_prices()
+        if not prices:
+            logger.warning("Failed to fetch prices, skipping monitor cycle")
+            return
+
         for sig in open_signals:
             try:
-                price = self.get_current_price(sig['symbol'])
+                price = prices.get(sig['symbol'])
                 if price is None:
+                    logger.debug(f"Price not found for {sig['symbol']}")
                     continue
 
                 self._evaluate(sig, price)
-                time.sleep(0.2)
 
             except Exception as e:
                 logger.warning(f"Monitor error for {sig['id']}: {e}")
