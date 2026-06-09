@@ -55,6 +55,8 @@ class CryptoScanner:
             logger.warning(f"Failed to fetch futures symbols: {e}, using empty filter")
             if self._futures_symbols is None:
                 self._futures_symbols = {}
+            # Set cache time even on failure to prevent rapid retry loops
+            self._futures_cache_time = time.time()
             return self._futures_symbols
 
     def _is_futures_available(self, spot_symbol: str) -> bool:
