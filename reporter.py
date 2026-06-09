@@ -9,10 +9,12 @@ import os
 import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 SIGNALS_FILE = "signals.json"
+DATA_DIR = Path("data/signals")
 
 
 def calc_signal_rr(s: dict) -> float:
@@ -49,11 +51,43 @@ def calc_signal_rr(s: dict) -> float:
     return 0.0
 
 
+def _load_signals_from_data_dir() -> list:
+    """Load all signals from the data/signals/ directory structure"""
+    signals = []
+    if not DATA_DIR.exists():
+        return signals
+
+    for year_dir in DATA_DIR.iterdir():
+        if not year_dir.is_dir():
+            continue
+        for month_dir in year_dir.iterdir():
+            if not month_dir.is_dir():
+                continue
+            for json_file in month_dir.glob("*.json"):
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            signals.extend(data)
+                except (json.JSONDecodeError, Exception):
+                    continue
+
+    return signals
+
+
 class PerformanceReporter:
     def __init__(self, telegram):
         self.telegram = telegram
+        self._last_daily_report_date = None
+        self._last_weekly_report_date = None
 
     def _load(self) -> list:
+        """Load signals from data directory or fallback to signals.json"""
+        # Try data directory first (matches api_server.py)
+        signals = _load_signals_from_data_dir()
+        if signals:
+            return signals
+        # Fallback to legacy signals.json
         if not os.path.exists(SIGNALS_FILE):
             return []
         try:
@@ -76,8 +110,15 @@ class PerformanceReporter:
 
     def send_daily_report(self):
         """Sends 24H performance summary to Telegram"""
-        signals = self._load()
         now = datetime.utcnow()
+        today = now.strftime('%Y-%m-%d')
+
+        # Prevent duplicate daily reports
+        if self._last_daily_report_date == today:
+            logger.info("Daily report already sent today, skipping duplicate.")
+            return
+
+        signals = self._load()
         cutoff = now - timedelta(hours=24)
 
         # Filter to last 24H closed signals (exclude OPEN and EXPIRED from main stats)
@@ -88,15 +129,12 @@ class PerformanceReporter:
             s.get('status') not in ('OPEN',)
         ]
 
-        all_open = [s for s in signals if s.get('status') == 'OPEN']
-
         if not recent:
             msg = (
                 f"📊  <b>DAILY REPORT</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"\n"
                 f"No closed signals in the last 24H.\n"
-                f"🔍  Open signals watching:  {len(all_open)}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━"
             )
             self.telegram.send_message(msg)
@@ -106,62 +144,17 @@ class PerformanceReporter:
         total = len(recent)
         wins = [s for s in recent if self._is_win(s)]
         losses = [s for s in recent if self._is_loss(s)]
-        neutrals = [s for s in recent if self._is_neutral(s)]
-        partials = [s for s in recent if s.get('status') in ('TP1', 'TP2', 'TP3')]
         breakevens = [s for s in recent if s.get('status') == 'BREAKEVEN']
 
         win_count = len(wins)
         loss_count = len(losses)
-        partial_count = len(partials)
         breakeven_count = len(breakevens)
-        neutral_count = len(neutrals)
 
         # Win rate: wins / (wins + losses) * 100, excludes neutral
         win_rate = round((win_count / (win_count + loss_count)) * 100, 1) if (win_count + loss_count) > 0 else 0
 
-        # Average RR on all positive outcomes (wins only, not breakeven)
-        rr_values = [calc_signal_rr(s) for s in wins if calc_signal_rr(s) > 0]
-        avg_rr = round(sum(rr_values) / len(rr_values), 2) if rr_values else 0
-
         # Total RR for the period
         total_rr = round(sum(calc_signal_rr(s) for s in recent), 2)
-
-        # Best performing pair
-        pair_wins = defaultdict(int)
-        pair_total = defaultdict(int)
-        for s in recent:
-            pair_total[s['symbol']] += 1
-            if self._is_win(s):
-                pair_wins[s['symbol']] += 1
-
-        best_pair = max(pair_wins, key=pair_wins.get) if pair_wins else 'N/A'
-        best_pair_wins = pair_wins.get(best_pair, 0)
-
-        # Strong vs Standard win rates
-        strong = [s for s in recent if s.get('strength') == 'STRONG']
-        standard = [s for s in recent if s.get('strength') == 'STANDARD']
-
-        def wr(lst):
-            if not lst:
-                return 'N/A'
-            w = sum(1 for s in lst if self._is_win(s))
-            l = sum(1 for s in lst if self._is_loss(s))
-            return f"{round((w / (w + l)) * 100, 1)}%  ({w}/{w + l})" if (w + l) > 0 else 'N/A'
-
-        # TP level breakdown (count how many hit each TP)
-        tp1_count = sum(1 for s in recent if s.get('tp1_hit'))
-        tp2_count = sum(1 for s in recent if s.get('tp2_hit'))
-        tp3_count = sum(1 for s in recent if s.get('tp3_hit'))
-        tp4_count = sum(1 for s in recent if s.get('tp4_hit'))
-        breakeven_closed_count = sum(1 for s in recent if s.get('status') == 'BREAKEVEN')
-
-        # Avg time in trade
-        times = [s.get('minutes_to_close') for s in recent if s.get('minutes_to_close')]
-        avg_mins = round(sum(times) / len(times)) if times else 0
-        if avg_mins < 60:
-            avg_time_str = f"{avg_mins}m"
-        else:
-            avg_time_str = f"{avg_mins // 60}h {avg_mins % 60}m"
 
         # Overall emoji
         if win_rate >= 60:
@@ -174,51 +167,53 @@ class PerformanceReporter:
             perf_emoji = '🔴'
             perf_label = 'Tough day'
 
+        # TP level breakdown (count how many hit each TP)
+        tp1_count = sum(1 for s in recent if s.get('tp1_hit'))
+        tp2_count = sum(1 for s in recent if s.get('tp2_hit'))
+        tp3_count = sum(1 for s in recent if s.get('tp3_hit'))
+        tp4_count = sum(1 for s in recent if s.get('tp4_hit'))
+
         msg = (
             f"📊  <b>DAILY PERFORMANCE REPORT</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🗓   {now.strftime('%d %b %Y')}  •  Last 24H\n"
+            f"🗓   {now.strftime('%d %b %Y')}\n"
             f"\n"
             f"{perf_emoji}  <b>{perf_label}</b>\n"
             f"\n"
             f"┌─────────────────────────\n"
             f"│  Total Signals:    {total}\n"
             f"│  ✅  Winners:        {win_count}\n"
-            f"│  ☑️   Partial (TP1-3): {partial_count}\n"
             f"│  🟡  Breakeven:     {breakeven_count}\n"
             f"│  ❌  Losers:         {loss_count}\n"
             f"│\n"
             f"│  Win Rate:         {win_rate}%\n"
-            f"│  Avg RR (wins):    1:{avg_rr}\n"
             f"│  Total RR:         {total_rr}R\n"
-            f"│  Avg Trade Time:  {avg_time_str}\n"
             f"└─────────────────────────\n"
             f"\n"
             f"🎯  <b>TP Breakdown</b>\n"
-            f"   TP1 hit:  {tp1_count} / {total}\n"
-            f"   TP2 hit:  {tp2_count} / {total}\n"
-            f"   TP3 hit:  {tp3_count} / {total}\n"
-            f"   TP4 hit:  {tp4_count} / {total}\n"
-            f"   Breakeven exits: {breakeven_closed_count}\n"
+            f"   TP1 hit:  {tp1_count}\n"
+            f"   TP2 hit:  {tp2_count}\n"
+            f"   TP3 hit:  {tp3_count}\n"
+            f"   TP4 hit:  {tp4_count}\n"
             f"\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📶  <b>Signal Tier Performance</b>\n"
-            f"   🔥 Strong:    {wr(strong)}\n"
-            f"   ⚡ Standard:  {wr(standard)}\n"
-            f"\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏆  Best Pair:  <b>{best_pair}</b>  ({best_pair_wins} wins)\n"
-            f"🔍  Still open:  {len(all_open)} signals\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━"
         )
 
         self.telegram.send_message(msg)
+        self._last_daily_report_date = today
         logger.info("Daily report sent.")
 
     def send_weekly_report(self):
         """Sends 7-day performance summary"""
-        signals = self._load()
         now = datetime.utcnow()
+        week_key = now.strftime('%Y-W%U')
+
+        # Prevent duplicate weekly report
+        if self._last_weekly_report_date == week_key:
+            logger.info("Weekly report already sent this week, skipping duplicate.")
+            return
+
+        signals = self._load()
         cutoff = now - timedelta(days=7)
 
         closed = [
@@ -235,25 +230,28 @@ class PerformanceReporter:
         total = len(closed)
         wins = [s for s in closed if self._is_win(s)]
         losses = [s for s in closed if self._is_loss(s)]
-        neutrals = [s for s in closed if self._is_neutral(s)]
-        partials = [s for s in closed if s.get('status') in ('TP1', 'TP2', 'TP3')]
         breakevens = [s for s in closed if s.get('status') == 'BREAKEVEN']
 
         win_count = len(wins)
         loss_count = len(losses)
-        partial_count = len(partials)
         breakeven_count = len(breakevens)
-        neutral_count = len(neutrals)
 
         # Win rate: wins / (wins + losses) * 100, excludes neutral
         win_rate = round((win_count / (win_count + loss_count)) * 100, 1) if (win_count + loss_count) > 0 else 0
 
-        # Average RR on wins
-        rr_values = [calc_signal_rr(s) for s in wins if calc_signal_rr(s) > 0]
-        avg_rr = round(sum(rr_values) / len(rr_values), 2) if rr_values else 0
-
         # Total RR for the period
         total_rr = round(sum(calc_signal_rr(s) for s in closed), 2)
+
+        # Overall emoji
+        if win_rate >= 60:
+            perf_emoji = '🟢'
+            perf_label = 'Good week'
+        elif win_rate >= 45:
+            perf_emoji = '🟡'
+            perf_label = 'Average week'
+        else:
+            perf_emoji = '🔴'
+            perf_label = 'Tough week'
 
         # TP breakdown
         tp1_count = sum(1 for s in closed if s.get('tp1_hit'))
@@ -261,37 +259,32 @@ class PerformanceReporter:
         tp3_count = sum(1 for s in closed if s.get('tp3_hit'))
         tp4_count = sum(1 for s in closed if s.get('tp4_hit'))
 
-        # Best pair overall
-        pair_wins = defaultdict(int)
-        for s in closed:
-            if self._is_win(s):
-                pair_wins[s['symbol']] += 1
-        best_pair = max(pair_wins, key=pair_wins.get) if pair_wins else 'N/A'
-
         msg = (
             f"📈  <b>WEEKLY PERFORMANCE REPORT</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🗓   Last 7 Days\n"
             f"\n"
-            f"Total Signals:   {total}\n"
-            f"✅  Winners:       {win_count}\n"
-            f"☑️   Partial:       {partial_count}\n"
-            f"🟡  Breakeven:     {breakeven_count}\n"
-            f"❌  Losers:        {loss_count}\n"
+            f"{perf_emoji}  <b>{perf_label}</b>\n"
             f"\n"
-            f"Win Rate:        <b>{win_rate}%</b>\n"
-            f"Avg RR (wins):  <b>1:{avg_rr}</b>\n"
-            f"Total RR:        <b>{total_rr}R</b>\n"
+            f"┌─────────────────────────\n"
+            f"│  Total Signals:    {total}\n"
+            f"│  ✅  Winners:        {win_count}\n"
+            f"│  🟡  Breakeven:     {breakeven_count}\n"
+            f"│  ❌  Losers:         {loss_count}\n"
+            f"│\n"
+            f"│  Win Rate:         {win_rate}%\n"
+            f"│  Total RR:         {total_rr}R\n"
+            f"└─────────────────────────\n"
             f"\n"
             f"🎯  <b>TP Breakdown</b>\n"
-            f"   TP1 hit:  {tp1_count} / {total}\n"
-            f"   TP2 hit:  {tp2_count} / {total}\n"
-            f"   TP3 hit:  {tp3_count} / {total}\n"
-            f"   TP4 hit:  {tp4_count} / {total}\n"
+            f"   TP1 hit:  {tp1_count}\n"
+            f"   TP2 hit:  {tp2_count}\n"
+            f"   TP3 hit:  {tp3_count}\n"
+            f"   TP4 hit:  {tp4_count}\n"
             f"\n"
-            f"🏆  Best Pair:  <b>{best_pair}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━"
         )
 
         self.telegram.send_message(msg)
+        self._last_weekly_report_date = week_key
         logger.info("Weekly report sent.")
