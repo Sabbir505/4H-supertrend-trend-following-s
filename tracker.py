@@ -8,6 +8,8 @@ Signal Tracker
 import json
 import os
 import time
+import asyncio
+import threading
 import requests
 import logging
 from datetime import datetime, timedelta
@@ -50,6 +52,153 @@ class SignalTracker:
         self.base_url = config.binance_base_url
         self.signals = self._load()
         self.cooldown = {}  # {symbol: datetime} — skip scanning until this time
+
+        # WebSocket state
+        self._price_cache = {}  # {symbol: price} from WebSocket ticks
+        self._ws_lock = threading.Lock()
+        self._ws_thread = None
+        self._ws_running = False
+        self._ws_connected = False
+
+    # ─── WebSocket Price Monitor ──────────────────────────────────────────────
+
+    def start_ws_monitor(self):
+        """Start WebSocket price monitoring in a background thread."""
+        if self._ws_running:
+            logger.warning("WebSocket monitor already running")
+            return
+        self._ws_running = True
+        self._ws_thread = threading.Thread(target=self._ws_loop, daemon=True)
+        self._ws_thread.start()
+        logger.info("WebSocket monitor started")
+
+    def stop_ws_monitor(self):
+        """Stop the WebSocket monitor."""
+        self._ws_running = False
+        if self._ws_thread:
+            self._ws_thread.join(timeout=5)
+        logger.info("WebSocket monitor stopped")
+
+    def _ws_loop(self):
+        """WebSocket event loop with reconnect and dynamic symbol subscriptions."""
+        import websockets
+
+        async def run_forever():
+            backoff = 1
+            while self._ws_running:
+                try:
+                    # Subscribe to all USDT ticker streams via combined endpoint
+                    # Use 50 common crypto symbols as baseline — Binance limits
+                    # combined stream to ~200 streams. We'll get all tickers
+                    # via individual subscriptions to active trade symbols.
+                    ws = await self._connect_with_symbols()
+                    if ws is None:
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, 30)
+                        continue
+
+                    async with ws:
+                        self._ws_connected = True
+                        logger.info("WebSocket connected — receiving live prices")
+                        backoff = 1  # Reset backoff on success
+
+                        # Periodically re-check which symbols we need
+                        last_sub_check = time.time()
+
+                        async for message in ws:
+                            if not self._ws_running:
+                                break
+                            self._on_ws_message_text(message)
+
+                            # Every 30s, check if we need different subscriptions
+                            now = time.time()
+                            if now - last_sub_check > 30:
+                                last_sub_check = now
+                except Exception as e:
+                    self._ws_connected = False
+                    logger.error(f"WebSocket error: {e}")
+
+                if not self._ws_running:
+                    break
+
+                logger.info(f"WebSocket reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+
+        try:
+            asyncio.run(run_forever())
+        except Exception as e:
+            logger.error(f"WS event loop crashed: {e}")
+            self._ws_connected = False
+
+    async def _connect_with_symbols(self):
+        """Connect to WebSocket with streams for all open signal symbols."""
+        import websockets
+
+        with self._ws_lock:
+            open_symbols = list(set(
+                s['symbol'].lower()
+                for s in self.signals
+                if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')
+            ))
+
+        if not open_symbols:
+            # No open trades — subscribe to BTCUSDT as a heartbeat
+            open_symbols = ['btcusdt']
+
+        streams = '/'.join([f'{s}@ticker' for s in open_symbols[:200]])
+        url = f'wss://stream.binance.com:9443/stream?streams={streams}'
+
+        logger.info(f"WebSocket subscribing to {len(open_symbols[:200])} symbols")
+        return await websockets.connect(url, ping_interval=60, ping_timeout=10)
+
+    def _on_ws_message_text(self, message):
+        """Process a ticker message from combined stream endpoint."""
+        try:
+            data = json.loads(message)
+            # Combined stream wraps each ticker: {"stream": "...", "data": {...}}
+            ticker = data.get('data')
+            if ticker is None:
+                return
+
+            symbol = ticker.get('s', '')
+            price_str = ticker.get('c', '')
+            if not symbol or not price_str:
+                return
+
+            with self._ws_lock:
+                self._price_cache[symbol] = float(price_str)
+                self._evaluate_open_signals_locked()
+        except json.JSONDecodeError:
+            pass
+        except Exception as e:
+            logger.error(f"WS message handler error: {e}")
+
+    def _evaluate_open_signals_locked(self):
+        """Evaluate all open signals using cached prices. Must be called with _ws_lock held."""
+        open_signals = [s for s in self.signals if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')]
+        if not open_signals:
+            return
+
+        changed = False
+        for sig in open_signals:
+            price = self._price_cache.get(sig['symbol'])
+            if price is None:
+                continue
+            try:
+                self._evaluate(sig, price)
+                # Check if status changed (signal closed)
+                if sig['status'] in ('SL', 'TP4', 'BREAKEVEN', 'EXPIRED', 'WIN'):
+                    changed = True
+            except Exception as e:
+                logger.warning(f"WS eval error for {sig.get('id')}: {e}")
+
+        if changed:
+            self._save()
+
+    def is_ws_connected(self) -> bool:
+        """Check if WebSocket is currently active."""
+        return self._ws_connected
 
     # ─── Persistence ─────────────────────────────────────────────────────────
 
@@ -196,33 +345,35 @@ class SignalTracker:
     # ─── Monitor Open Signals ─────────────────────────────────────────────────
 
     def check_open_signals(self):
-        """Called every 5 min — checks if any open signal hit TP or SL"""
-        # Monitor OPEN signals and partial TP hits (waiting for next TP)
+        """Called every 5 min as fallback — checks if any open signal hit TP or SL"""
+        # Only run REST poll if WebSocket is currently disconnected
+        if self._ws_connected:
+            return
+
         open_signals = [s for s in self.signals if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')]
         if not open_signals:
             return
 
-        logger.info(f"Monitoring {len(open_signals)} open signals...")
+        logger.info(f"Fallback REST monitor: {len(open_signals)} open signals...")
 
-        # Fetch all prices in a single API call
         prices = self.get_all_prices()
         if not prices:
             logger.warning("Failed to fetch prices, skipping monitor cycle")
             return
 
-        for sig in open_signals:
-            try:
-                price = prices.get(sig['symbol'])
-                if price is None:
-                    logger.debug(f"Price not found for {sig['symbol']}")
-                    continue
+        with self._ws_lock:
+            # Also update the price cache from REST
+            self._price_cache.update(prices)
+            for sig in open_signals:
+                try:
+                    price = prices.get(sig['symbol'])
+                    if price is None:
+                        continue
+                    self._evaluate(sig, price)
+                except Exception as e:
+                    logger.warning(f"Monitor error for {sig['id']}: {e}")
 
-                self._evaluate(sig, price)
-
-            except Exception as e:
-                logger.warning(f"Monitor error for {sig['id']}: {e}")
-
-        self._save()
+            self._save()
 
     def is_on_cooldown(self, symbol: str) -> bool:
         """Check if a symbol is still in cooldown period"""

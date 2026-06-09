@@ -367,8 +367,11 @@ if __name__ == "__main__":
     for hour in [0, 4, 8, 12, 16, 20]:
         schedule.every().day.at(f"{hour:02d}:02").do(run_4h_scan)
 
-    # Price monitor every 5 min
+    # Price monitor every 5 min (fallback when WebSocket disconnects)
     schedule.every(5).minutes.do(run_monitor)
+
+    # Start real-time WebSocket price monitor
+    tracker.start_ws_monitor()
 
     # Daily report at midnight UTC
     schedule.every().day.at("00:05").do(reporter.send_daily_report)
