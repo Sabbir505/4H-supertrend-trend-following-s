@@ -236,8 +236,24 @@ export default function MarketIntelPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-slate-400">Loading market intel...</div>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-40 bg-[#1e293b] rounded" />
+          <div className="grid grid-cols-3 gap-6">
+            <div className="col-span-2 bg-[#111827] border border-[#1e293b] rounded-xl p-5 space-y-4">
+              <div className="h-4 w-36 bg-[#1e293b] rounded" />
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <div className="h-4 w-20 bg-[#1e293b] rounded" />
+                  <div className="h-4 w-32 bg-[#1e293b] rounded" />
+                  <div className="h-4 w-16 bg-[#1e293b] rounded" />
+                </div>
+              ))}
+            </div>
+            <div className="bg-[#111827] border border-[#1e293b] rounded-xl p-5 space-y-4">
+              <div className="h-4 w-28 bg-[#1e293b] rounded" />
+              <div className="h-32 bg-[#1e293b]/50 rounded" />
+            </div>
+          </div>
         </div>
       </DashboardLayout>
     );

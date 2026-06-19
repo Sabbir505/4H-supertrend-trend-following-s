@@ -296,8 +296,19 @@ export default function TradeHistoryPage() {
         <Card className="bg-[#111827] border-[#1e293b]">
           <CardContent className="p-0">
             {loading ? (
-              <div className="flex items-center justify-center h-64 text-slate-400">
-                Loading trade history...
+              <div className="animate-pulse p-5 space-y-4">
+                {[...Array(8)].map((_, i) => (
+                  <div key={i} className="flex items-center gap-4">
+                    <div className="h-4 w-24 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-16 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-16 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-16 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-16 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-16 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-12 bg-[#1e293b] rounded" />
+                    <div className="h-4 w-20 bg-[#1e293b] rounded" />
+                  </div>
+                ))}
               </div>
             ) : error ? (
               <div className="flex items-center justify-center h-64 text-red-400">
@@ -308,19 +319,19 @@ export default function TradeHistoryPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-[#1e293b]">
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Symbol</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Direction</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Entry</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">SL</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP1</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP2</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP3</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP4</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">RR</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Quality</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Outcome</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Strength</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Closed</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-3 py-3">Symbol</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">Direction</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">Entry</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">SL</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">TP1</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">TP2</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">TP3</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">TP4</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">RR</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">Quality</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">Outcome</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">Strength</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-2 py-3">Closed</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -346,10 +357,10 @@ export default function TradeHistoryPage() {
                             key={signal.id}
                             className="border-b border-[#1e293b]/50 hover:bg-[#1e293b]/30 transition-colors"
                           >
-                            <td className="px-5 py-3">
+                            <td className="px-3 py-2.5">
                               <span className="text-sm font-semibold text-white">{signal.symbol}</span>
                             </td>
-                            <td className="px-5 py-3">
+                            <td className="px-2 py-2.5">
                               <Badge
                                 variant="outline"
                                 className={
@@ -362,23 +373,23 @@ export default function TradeHistoryPage() {
                                 {signal.direction}
                               </Badge>
                             </td>
-                            <td className="px-5 py-3 text-sm text-white">{formatPrice(signal.entry)}</td>
-                            <td className="px-5 py-3 text-sm text-red-400">{formatPrice(signal.sl)}</td>
-                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp1)}</td>
-                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp2)}</td>
-                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp3)}</td>
-                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp4)}</td>
-                            <td className="px-5 py-3">
-                              <span className={`text-sm font-bold ${rr > 0 ? "text-emerald-400" : rr < 0 ? "text-red-400" : "text-slate-400"}`}>
+                            <td className="px-2 py-2.5 text-xs text-white">{formatPrice(signal.entry)}</td>
+                            <td className="px-2 py-2.5 text-xs text-red-400">{formatPrice(signal.sl)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp1)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp2)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp3)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp4)}</td>
+                            <td className="px-2 py-2.5">
+                              <span className={`text-xs font-bold ${rr > 0 ? "text-emerald-400" : rr < 0 ? "text-red-400" : "text-slate-400"}`}>
                                 {rr > 0 ? "+" : ""}{rr.toFixed(2)}R
                               </span>
                             </td>
-                            <td className="px-5 py-3">
-                              <span className={`text-sm font-medium ${signal.quality_score >= 70 ? "text-emerald-400" : signal.quality_score >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                            <td className="px-2 py-2.5">
+                              <span className={`text-xs font-medium ${signal.quality_score >= 70 ? "text-emerald-400" : signal.quality_score >= 50 ? "text-amber-400" : "text-red-400"}`}>
                                 {signal.quality_score.toFixed(1)}
                               </span>
                             </td>
-                            <td className="px-5 py-3">
+                            <td className="px-2 py-2.5">
                               <Badge
                                 variant="outline"
                                 className={`${outcomeColors[signal.status] || outcomeColors.EXPIRED} text-xs`}
@@ -386,7 +397,7 @@ export default function TradeHistoryPage() {
                                 {signal.status}
                               </Badge>
                             </td>
-                            <td className="px-5 py-3">
+                            <td className="px-2 py-2.5">
                               <Badge
                                 variant="outline"
                                 className={
@@ -398,7 +409,7 @@ export default function TradeHistoryPage() {
                                 {signal.strength || "STANDARD"}
                               </Badge>
                             </td>
-                            <td className="px-5 py-3 text-sm text-slate-400">
+                            <td className="px-2 py-2.5 text-xs text-slate-400 whitespace-nowrap">
                               {closedDate !== "-" ? closedDate : firedDate}
                             </td>
                           </tr>

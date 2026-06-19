@@ -147,8 +147,27 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-slate-400">Loading dashboard...</div>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-48 bg-[#1e293b] rounded" />
+          <div className="grid grid-cols-5 gap-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="bg-[#111827] border border-[#1e293b] rounded-xl p-5 space-y-3">
+                <div className="h-3 w-20 bg-[#1e293b] rounded" />
+                <div className="h-7 w-16 bg-[#1e293b] rounded" />
+                <div className="h-3 w-24 bg-[#1e293b] rounded" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-6">
+            <div className="col-span-2 bg-[#111827] border border-[#1e293b] rounded-xl p-5">
+              <div className="h-4 w-40 bg-[#1e293b] rounded mb-4" />
+              <div className="h-64 bg-[#1e293b]/50 rounded" />
+            </div>
+            <div className="bg-[#111827] border border-[#1e293b] rounded-xl p-5">
+              <div className="h-4 w-36 bg-[#1e293b] rounded mb-4" />
+              <div className="h-48 bg-[#1e293b]/50 rounded" />
+            </div>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -178,7 +197,8 @@ export default function DashboardPage() {
       winRate: (data.wins + data.losses) > 0 ? parseFloat(((data.wins / (data.wins + data.losses)) * 100).toFixed(1)) : 0,
       total: data.total,
     }))
-    .sort((a, b) => b.total - a.total)
+    .filter((s) => s.winRate > 0 || s.total >= 3)
+    .sort((a, b) => b.winRate - a.winRate)
     .slice(0, 8);
 
   // Recent signals (latest 5)
@@ -240,7 +260,7 @@ export default function DashboardPage() {
                 <Target className="w-4 h-4 text-emerald-400" />
                 <p className="text-xs text-slate-500 uppercase">Win Rate</p>
               </div>
-              <p className={`text-2xl font-bold mt-2 ${(stats?.win_rate ?? 0) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+              <p className={`text-2xl font-bold mt-2 ${(stats?.win_rate ?? 0) >= 50 ? "text-emerald-400" : (stats?.win_rate ?? 0) >= 25 ? "text-amber-400" : "text-red-400"}`}>
                 {stats?.win_rate?.toFixed(1) ?? "0.0"}%
               </p>
               <p className="text-xs text-slate-400 mt-0.5">From closed signals</p>

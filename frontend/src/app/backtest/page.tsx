@@ -99,8 +99,20 @@ export default function BacktestPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-slate-400">Loading backtest data...</div>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-32 bg-[#1e293b] rounded" />
+          <div className="grid grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="bg-[#111827] border border-[#1e293b] rounded-xl p-5 space-y-3">
+                <div className="h-3 w-20 bg-[#1e293b] rounded" />
+                <div className="h-7 w-16 bg-[#1e293b] rounded" />
+              </div>
+            ))}
+          </div>
+          <div className="bg-[#111827] border border-[#1e293b] rounded-xl p-5">
+            <div className="h-4 w-40 bg-[#1e293b] rounded mb-4" />
+            <div className="h-64 bg-[#1e293b]/50 rounded" />
+          </div>
         </div>
       </DashboardLayout>
     );
