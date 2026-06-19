@@ -195,9 +195,8 @@ export default function DashboardPage() {
     })
     .slice(0, 5);
 
-  // Compute total RR from closed signals (consistent with equity curve)
-  // Use API total_rr if available, otherwise fall back to equity curve calculation
-  const totalRR = stats?.total_rr ?? (equityDataWithCumulative.length > 0 ? equityDataWithCumulative[equityDataWithCumulative.length - 1].rr : 0);
+  // Compute total RR from closed signals only (consistent with equity curve and trade history)
+  const totalRR = equityDataWithCumulative.length > 0 ? equityDataWithCumulative[equityDataWithCumulative.length - 1].rr : 0;
 
   return (
     <DashboardLayout>
