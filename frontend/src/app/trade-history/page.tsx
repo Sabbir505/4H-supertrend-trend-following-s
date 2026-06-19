@@ -314,6 +314,8 @@ export default function TradeHistoryPage() {
                       <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">SL</th>
                       <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP1</th>
                       <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP2</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP3</th>
+                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP4</th>
                       <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">RR</th>
                       <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Quality</th>
                       <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Outcome</th>
@@ -324,7 +326,7 @@ export default function TradeHistoryPage() {
                   <tbody>
                     {paginatedSignals.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="text-center py-12 text-slate-400">
+                        <td colSpan={13} className="text-center py-12 text-slate-400">
                           No trades found matching your filters
                         </td>
                       </tr>
@@ -364,6 +366,8 @@ export default function TradeHistoryPage() {
                             <td className="px-5 py-3 text-sm text-red-400">{formatPrice(signal.sl)}</td>
                             <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp1)}</td>
                             <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp2)}</td>
+                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp3)}</td>
+                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp4)}</td>
                             <td className="px-5 py-3">
                               <span className={`text-sm font-bold ${rr > 0 ? "text-emerald-400" : rr < 0 ? "text-red-400" : "text-slate-400"}`}>
                                 {rr > 0 ? "+" : ""}{rr.toFixed(2)}R
