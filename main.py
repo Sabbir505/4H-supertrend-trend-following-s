@@ -85,7 +85,7 @@ def release_lock():
             _lock_file.close()
             if os.path.exists(LOCK_FILE):
                 os.remove(LOCK_FILE)
-        except:
+        except Exception:
             pass
 
 # Fix for Windows UTF-8 encoding issues in logging
@@ -429,7 +429,7 @@ def run_1h_scan():
             predicted_win_prob = None
             if win_predictor is not None:
                 try:
-                    predicted_win_prob = win_predictor.predict(signal)
+                    predicted_win_prob = win_predictor.predict_proba(signal)
                     if predicted_win_prob < min_win_probability:
                         logger.debug(f"Skipping {symbol} — win probability {predicted_win_prob:.2f} < {min_win_probability}")
                         continue
