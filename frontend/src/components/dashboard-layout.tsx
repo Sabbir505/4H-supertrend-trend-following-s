@@ -5,15 +5,17 @@ import { Sidebar } from "@/components/sidebar";
 import { cn } from "@/lib/utils";
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-background">
       <Sidebar onCollapseChange={setSidebarCollapsed} />
-      <main className={cn(
-        "flex-1 p-6 bg-[#0b0f19] min-h-screen transition-all duration-300",
-        sidebarCollapsed ? "ml-16" : "ml-64"
-      )}>
+      <main
+        className={cn(
+          "flex-1 min-h-screen transition-all duration-300 p-6",
+          sidebarCollapsed ? "ml-[60px]" : "ml-[250px]"
+        )}
+      >
         {children}
       </main>
     </div>
