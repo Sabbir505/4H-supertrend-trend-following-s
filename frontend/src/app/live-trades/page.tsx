@@ -164,18 +164,17 @@ const coinGeckoIds: Record<string, { id: number; image: string }> = {
   DAIUSDT: { id: 9956, image: "dai" },
   BUSDUSDT: { id: 11967, image: "binance-usd" },
   FRAXUSDT: { id: 23233, image: "frax" },
-  TETHEUSDT: { id: 1, image: "bitcoin" },
+  TETHEUSDT: { id: 825, image: "tethe" },  // TETHE (Thether) - placeholder, should use actual icon
   USDTUSDT: { id: 325, image: "tether" },
 };
 
 function getCoinGeckoIconUrl(symbol: string): string {
   const coin = coinGeckoIds[symbol];
-  if (!coin) {
-    // Fallback: try to derive from symbol
-    const base = symbol.replace(/(USDT|USDC|BUSD|TUSD|USDC)$/i, "").toLowerCase();
-    return `https://coin-images.coingecko.com/coins/images/1/small/${base}.png`;
+  if (coin) {
+    return `https://coin-images.coingecko.com/coins/images/${coin.id}/small/${coin.image}.png`;
   }
-  return `https://coin-images.coingecko.com/coins/images/${coin.id}/small/${coin.image}.png`;
+  // Fallback to CoinGecko's generic question mark icon
+  return `https://coin-images.coingecko.com/coins/images/1/small/question.png`;
 }
 
 function mapSignalToTrade(signal: Signal): TradeDisplay {
@@ -195,8 +194,8 @@ function mapSignalToTrade(signal: Signal): TradeDisplay {
     const slDistance = Math.abs(entryPrice - slPrice);
     // Express P&L in R-multiples (risk-adjusted)
     pnl = slDistance > 0 ? priceDiff / slDistance : 0;
-    // PNL % with 10x leverage
-    pnlPercent = (priceDiff / entryPrice) * 100 * 10;
+    // PNL % (without leverage assumption - pure price change percentage)
+    pnlPercent = slDistance > 0 ? (priceDiff / slDistance) * 100 : 0;
   }
 
   return {
@@ -213,8 +212,8 @@ function mapSignalToTrade(signal: Signal): TradeDisplay {
     tp4Price: signal.tp4,
     rr1: signal.rr1,
     rr2: signal.rr2 || 2.0,
-    rr3: signal.rr3 || 2.5,
-    rrMax: signal.rr_max,
+    rr3: signal.rr3 || 3.0,
+    rrMax: signal.rr_max || 4.0,
     qualityScore: signal.quality_score,
     timeAgo: formatTimeAgo(signal.fired_at),
     firedAt: signal.fired_at,
@@ -332,18 +331,21 @@ export default function LiveTradesPage() {
             ...trade,
             currentPrice,
             pnl: slDistance > 0 ? priceDiff / slDistance : 0,
-            pnlPercent: (priceDiff / trade.entryPrice) * 100 * 10,
+            pnlPercent: slDistance > 0 ? (priceDiff / slDistance) * 100 : 0,
           };
         }
         return trade;
       });
 
       // Check for trade outcomes (TP/SL hits) by comparing with previous trades
-      // Only trigger if we successfully got new trades (not empty due to error)
-      if (prevTradesRef.current.length > 0 && newTrades.length > 0) {
-        const closedTrades = prevTradesRef.current.filter(pt => !newTrades.find(nt => nt.id === pt.id));
+      // Only trigger notification if we have trades and the API returned data successfully
+      if (prevTradesRef.current.length > 0 && tradesWithPrices.length > 0) {
+        const closedTrades = prevTradesRef.current.filter(pt => !tradesWithPrices.find(nt => nt.id === pt.id));
         closedTrades.forEach(trade => {
-          sendTradeNotification(trade.symbol, "a target/stop loss");
+          // Only send notification if we have a valid trade that was actually open
+          if (trade.entryPrice > 0 && trade.symbol) {
+            sendTradeNotification(trade.symbol, "a target/stop loss");
+          }
         });
       }
 
@@ -371,18 +373,27 @@ export default function LiveTradesPage() {
     }
   }, [fetchData]);
 
-  // Auto-refresh with countdown
+  // Auto-refresh with countdown - combined into single effect to avoid race condition
   useEffect(() => {
     if (!autoRefresh) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = null;
       return;
     }
+    let fetching = false;
+    const refreshCycle = async () => {
+      if (fetching) return;
+      fetching = true;
+      await fetchData();
+      setCountdown(30);
+      fetching = false;
+    };
+    refreshCycle();
     intervalRef.current = setInterval(() => {
       setCountdown(prev => {
         if (prev <= 1) {
-          // Schedule fetchData outside of setState updater
-          Promise.resolve().then(() => fetchData());
+          // Trigger data fetch when countdown reaches 0
+          refreshCycle();
           return 30;
         }
         return prev - 1;
@@ -470,10 +481,12 @@ export default function LiveTradesPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {trades.map((trade) => {
                   const isLong = trade.direction === "LONG";
-                  // Calculate SL distance as percentage
-                  const slPct = isLong
-                    ? ((trade.entryPrice - trade.slPrice) / trade.entryPrice * 100)
-                    : ((trade.slPrice - trade.entryPrice) / trade.entryPrice * 100);
+                  // Calculate SL distance as percentage (absolute value)
+                  const slPct = Math.abs(
+                    isLong
+                      ? ((trade.entryPrice - trade.slPrice) / trade.entryPrice * 100)
+                      : ((trade.slPrice - trade.entryPrice) / trade.entryPrice * 100)
+                  );
 
                   return (
                     <Card
@@ -600,11 +613,11 @@ export default function LiveTradesPage() {
                               </div>
                               {trade.pnl !== null && trade.pnlPercent !== null && (
                                 <div className="text-right">
-                                  <p className="text-xs text-slate-500">PNL (10x)</p>
-                                  <p className={`text-lg font-bold ${trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                    {trade.pnl >= 0 ? "+" : ""}{trade.pnlPercent.toFixed(2)}%
+                                  <p className="text-xs text-slate-500">PNL (10x Leveraged)</p>
+                                  <p className={`text-lg font-bold ${trade.pnlPercent >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                    {trade.pnlPercent >= 0 ? "+" : ""}{trade.pnlPercent.toFixed(2)}%
                                   </p>
-                                  <p className={`text-xs ${trade.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                  <p className="text-xs text-slate-500 mt-0.5">
                                     {trade.pnl >= 0 ? "+" : ""}{trade.pnl.toFixed(2)}R
                                   </p>
                                 </div>
@@ -650,25 +663,30 @@ export default function LiveTradesPage() {
                           {trade.status !== "OPEN" && (
                             <div className="mt-3 p-3 bg-[#1e293b]/30 rounded-lg">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs text-slate-400">Position Closed</span>
+                                <span className="text-xs text-slate-400">
+                                  {trade.status === "SL" ? "Stop Loss Hit" : "Position Closed"}
+                                </span>
                                 <span className="text-xs font-bold text-emerald-400">
-                                  {trade.status === "TP1" ? "40%" :
+                                  {trade.status === "SL" ? "" :
+                                   trade.status === "TP1" ? "40%" :
                                    trade.status === "TP2" ? "70%" :
                                    trade.status === "TP3" ? "90%" :
                                    trade.status === "TP4" ? "100%" : ""}
                                 </span>
                               </div>
-                              <div className="w-full bg-[#1e293b] rounded-full h-2">
-                                <div
-                                  className="h-2 rounded-full bg-emerald-500 transition-all duration-500"
-                                  style={{
-                                    width: trade.status === "TP1" ? "40%" :
-                                           trade.status === "TP2" ? "70%" :
-                                           trade.status === "TP3" ? "90%" :
-                                           trade.status === "TP4" ? "100%" : "0%"
-                                  }}
-                                />
-                              </div>
+                              {trade.status !== "SL" && (
+                                <div className="w-full bg-[#1e293b] rounded-full h-2">
+                                  <div
+                                    className="h-2 rounded-full bg-emerald-500 transition-all duration-500"
+                                    style={{
+                                      width: trade.status === "TP1" ? "40%" :
+                                             trade.status === "TP2" ? "70%" :
+                                             trade.status === "TP3" ? "90%" :
+                                             trade.status === "TP4" ? "100%" : "0%"
+                                    }}
+                                  />
+                                </div>
+                              )}
                             </div>
                           )}
 

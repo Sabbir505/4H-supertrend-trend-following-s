@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 // Default timeout for API requests (ms)
 const API_TIMEOUT = 10000;
@@ -136,6 +136,52 @@ export interface AnalyticsSummary {
   total_signals: number;
 }
 
+// ─── Market Intel Types ───────────────────────────────────────────────────────
+
+export interface EconomicEvent {
+  id: string;
+  title: string;
+  currency: string;
+  impact: "LOW" | "MEDIUM" | "HIGH";
+  event_type: string;
+  timestamp: string;
+  actual?: string;
+  forecast?: string;
+  previous?: string;
+  sentiment?: "bullish" | "bearish" | "neutral";
+}
+
+export interface CryptoNews {
+  id: string;
+  title: string;
+  source: string;
+  published_at: string;
+  sentiment?: "positive" | "negative" | "neutral";
+  currencies: string[];
+  url?: string;
+  impact_score?: number;
+}
+
+export interface TokenEvent {
+  id: string;
+  token: string;
+  event_type: string;
+  timestamp: string;
+  description: string;
+  impact: "LOW" | "MEDIUM" | "HIGH";
+  amount?: number;
+  url?: string;
+}
+
+export interface ImpactCorrelation {
+  event_id: string;
+  event_title: string;
+  affected_symbols: string[];
+  position_impact: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+  risk_adjustment: "INCREASE_SL" | "MONITOR" | "HOLD" | "CLOSE_POSITION";
+  reason: string;
+}
+
 // ─── API Client ───────────────────────────────────────────────────────────────
 
 async function fetchAPI<T>(endpoint: string): Promise<T> {
@@ -212,4 +258,22 @@ export async function getLiveTrades(): Promise<LiveTrade[]> {
 
 export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
   return fetchAPI<AnalyticsSummary>('/api/analytics/summary');
+}
+
+// ─── Market Intel Endpoints ───────────────────────────────────────────────────
+
+export async function getEconomicCalendar(): Promise<EconomicEvent[]> {
+  return fetchAPI<EconomicEvent[]>('/api/market/calendar');
+}
+
+export async function getCryptoNews(): Promise<CryptoNews[]> {
+  return fetchAPI<CryptoNews[]>('/api/market/news');
+}
+
+export async function getTokenEvents(): Promise<TokenEvent[]> {
+  return fetchAPI<TokenEvent[]>('/api/market/events');
+}
+
+export async function getImpactAnalysis(): Promise<ImpactCorrelation[]> {
+  return fetchAPI<ImpactCorrelation[]>('/api/market/impact');
 }

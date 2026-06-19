@@ -23,8 +23,8 @@ export function cn(...inputs: ClassValue[]) {
 export function calculateRR(signal: Signal): number {
   const rr1 = signal.rr1 || 1.5;
   const rr2 = signal.rr2 || 2.0;
-  const rr3 = signal.rr3 || 2.5;
-  const rrMax = signal.rr_max || 3.0;
+  const rr3 = signal.rr3 ?? 3.0;  // Match backend default
+  const rrMax = signal.rr_max ?? 4.0;  // Match backend default
 
   if (signal.status === "SL") {
     return -1;

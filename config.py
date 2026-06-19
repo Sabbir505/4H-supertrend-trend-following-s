@@ -38,15 +38,15 @@ class Config:
             self.atr_sl_multiplier = float(os.getenv("ATR_SL_MULTIPLIER", "1.0"))
             self.atr_tp1_multiplier = float(os.getenv("ATR_TP1_MULTIPLIER", "1.5"))
             self.atr_tp2_multiplier = float(os.getenv("ATR_TP2_MULTIPLIER", "2.0"))
-            self.atr_tp3_multiplier = float(os.getenv("ATR_TP3_MULTIPLIER", "2.5"))
-            self.atr_tp4_multiplier = float(os.getenv("ATR_TP4_MULTIPLIER", "3.0"))
+            self.atr_tp3_multiplier = float(os.getenv("ATR_TP3_MULTIPLIER", "3.0"))
+            self.atr_tp4_multiplier = float(os.getenv("ATR_TP4_MULTIPLIER", "4.0"))
         except ValueError:
-            logger.warning("Invalid ATR multiplier, using defaults (1.0, 1.5, 2.0, 2.5, 3.0)")
+            logger.warning("Invalid ATR multiplier, using defaults (1.0, 1.5, 2.0, 3.0, 4.0)")
             self.atr_sl_multiplier = 1.0
             self.atr_tp1_multiplier = 1.5
             self.atr_tp2_multiplier = 2.0
-            self.atr_tp3_multiplier = 2.5
-            self.atr_tp4_multiplier = 3.0
+            self.atr_tp3_multiplier = 3.0
+            self.atr_tp4_multiplier = 4.0
 
         # TP Position Closing Percentages (must sum to 100%)
         # 4-TP system: Close 40% at TP1, 30% at TP2, 20% at TP3, 10% at TP4
@@ -62,6 +62,18 @@ class Config:
             self.tp3_close_pct = 0.20
             self.tp4_close_pct = 0.10
 
+        # Validate TP percentages sum to 100%
+        tp_total = self.tp1_close_pct + self.tp2_close_pct + self.tp3_close_pct + self.tp4_close_pct
+        if abs(tp_total - 1.0) > 0.001:
+            logger.warning(
+                f"TP close percentages sum to {tp_total*100:.1f}% (expected 100%). "
+                f"Using defaults."
+            )
+            self.tp1_close_pct = 0.40
+            self.tp2_close_pct = 0.30
+            self.tp3_close_pct = 0.20
+            self.tp4_close_pct = 0.10
+
         # Leverage setting for Telegram signals (Bug fix: was hardcoded to 10X)
         try:
             self.leverage = int(os.getenv("LEVERAGE", "10"))
@@ -72,9 +84,46 @@ class Config:
         # Signal expiration in minutes (Bug #18 fix) - default 7 days = 10080 minutes
         try:
             self.signal_expiration_minutes = int(os.getenv("SIGNAL_EXPIRATION_MINUTES", "10080"))
+            if self.signal_expiration_minutes <= 0:
+                logger.warning("SIGNAL_EXPIRATION_MINUTES must be positive, using default 10080")
+                self.signal_expiration_minutes = 10080
         except ValueError:
             logger.warning("Invalid SIGNAL_EXPIRATION_MINUTES, using default 10080 (7 days)")
             self.signal_expiration_minutes = 10080
+
+        # New trading system improvements (from AI analysis)
+        try:
+            self.min_quality_score = int(os.getenv("MIN_QUALITY_SCORE", "60"))
+            if not (0 <= self.min_quality_score <= 100):
+                logger.warning("MIN_QUALITY_SCORE must be 0-100, using default 60")
+                self.min_quality_score = 60
+        except ValueError:
+            logger.warning("Invalid MIN_QUALITY_SCORE, using default 60")
+            self.min_quality_score = 60
+
+        try:
+            self.trading_start_hour = int(os.getenv("TRADING_START_HOUR", "14"))
+            self.trading_end_hour = int(os.getenv("TRADING_END_HOUR", "22"))
+            if not (0 <= self.trading_start_hour <= 23):
+                self.trading_start_hour = 14
+            if not (0 <= self.trading_end_hour <= 23):
+                self.trading_end_hour = 22
+        except ValueError:
+            logger.warning("Invalid trading hours, using defaults 14-22 UTC")
+            self.trading_start_hour = 14
+            self.trading_end_hour = 22
+
+        try:
+            self.symbol_win_rate_min = float(os.getenv("SYMBOL_WIN_RATE_MIN", "0.40"))
+            if not (0.0 <= self.symbol_win_rate_min <= 1.0):
+                self.symbol_win_rate_min = 0.40
+        except ValueError:
+            logger.warning("Invalid SYMBOL_WIN_RATE_MIN, using default 0.40")
+            self.symbol_win_rate_min = 0.40
+
+        # Adaptive TP levels
+        adaptive_tp = os.getenv("ADAPTIVE_TP_ENABLED", "true").lower()
+        self.adaptive_tp_enabled = adaptive_tp in ("true", "1", "yes")
 
         # Market regime detection parameters
         try:

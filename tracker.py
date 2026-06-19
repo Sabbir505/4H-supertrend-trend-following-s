@@ -12,7 +12,7 @@ import asyncio
 import threading
 import requests
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,9 @@ class SignalTracker:
         self._ws_thread = None
         self._ws_running = False
         self._ws_connected = False
+        self._last_ws_message = 0  # timestamp of last WebSocket message received
+        self._last_tick_log = 0  # timestamp of last aggregated tick log
+        self._last_eval_log = 0  # timestamp of last evaluation log
 
     # ─── WebSocket Price Monitor ──────────────────────────────────────────────
 
@@ -70,6 +73,9 @@ class SignalTracker:
         self._ws_running = True
         self._ws_thread = threading.Thread(target=self._ws_loop, daemon=True)
         self._ws_thread.start()
+        # Start watchdog thread to detect stuck connections
+        self._ws_watchdog_thread = threading.Thread(target=self._ws_watchdog, daemon=True)
+        self._ws_watchdog_thread.start()
         logger.info("WebSocket monitor started")
 
     def stop_ws_monitor(self):
@@ -77,7 +83,33 @@ class SignalTracker:
         self._ws_running = False
         if self._ws_thread:
             self._ws_thread.join(timeout=5)
+        if hasattr(self, '_ws_watchdog_thread') and self._ws_watchdog_thread:
+            self._ws_watchdog_thread.join(timeout=5)
         logger.info("WebSocket monitor stopped")
+
+    def _ws_watchdog(self):
+        """Watchdog that detects stuck WebSocket connections and forces reconnection."""
+        last_heartbeat_log = 0
+        while self._ws_running:
+            time.sleep(30)
+            if not self._ws_running:
+                break
+            # If connected but no message in 90 seconds, force reconnection
+            if self._ws_connected and time.time() - self._last_ws_message > 90:
+                logger.warning("WebSocket watchdog: no message in 90s, forcing reconnection")
+                self._ws_connected = False
+                # Trigger REST fallback to evaluate signals while reconnecting
+                try:
+                    self.check_open_signals()
+                except Exception as e:
+                    logger.error(f"REST fallback after WebSocket timeout failed: {e}")
+
+            # Log heartbeat every 5 minutes when connected
+            if self._ws_connected and time.time() - last_heartbeat_log > 300:
+                cache_size = len(self._price_cache)
+                open_count = len([s for s in self.signals if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')])
+                logger.info(f"WebSocket heartbeat: connected, {cache_size} prices cached, {open_count} open signals")
+                last_heartbeat_log = time.time()
 
     def _ws_loop(self):
         """WebSocket event loop with reconnect and dynamic symbol subscriptions."""
@@ -99,21 +131,57 @@ class SignalTracker:
 
                     async with ws:
                         self._ws_connected = True
+                        self._last_ws_message = time.time()
                         logger.info("WebSocket connected — receiving live prices")
                         backoff = 1  # Reset backoff on success
 
                         # Periodically re-check which symbols we need
                         last_sub_check = time.time()
 
-                        async for message in ws:
-                            if not self._ws_running:
+                        while self._ws_running and self._ws_connected:
+                            try:
+                                # Wait for next message with 60s timeout
+                                message = await asyncio.wait_for(ws.recv(), timeout=60.0)
+                                self._last_ws_message = time.time()
+                                self._on_ws_message_text(message)
+                            except asyncio.TimeoutError:
+                                logger.warning("WebSocket recv timeout — no message in 60s, reconnecting")
+                                self._ws_connected = False
                                 break
-                            self._on_ws_message_text(message)
+                            except websockets.exceptions.ConnectionClosed:
+                                logger.warning("WebSocket connection closed")
+                                self._ws_connected = False
+                                break
 
                             # Every 30s, check if we need different subscriptions
                             now = time.time()
                             if now - last_sub_check > 30:
                                 last_sub_check = now
+                                # Check if any new symbols have been added since last subscription
+                                with self._ws_lock:
+                                    current_symbols = set(
+                                        s['symbol'].lower()
+                                        for s in self.signals
+                                        if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')
+                                    )
+                                # Get currently subscribed symbols from price cache (normalize to lowercase)
+                                with self._ws_lock:
+                                    subscribed_symbols = set(
+                                        sym.lower() for sym in self._price_cache
+                                    )
+                                # If there are symbols we should be tracking but aren't, force reconnection
+                                new_symbols = current_symbols - subscribed_symbols
+                                if new_symbols:
+                                    logger.info(f"New symbols detected: {[s.upper() for s in new_symbols]}, forcing WebSocket reconnection")
+                                    self._ws_connected = False
+                                    break
+                                # Also check if any old symbols should be unsubscribed
+                                removed_symbols = subscribed_symbols - current_symbols
+                                if removed_symbols and subscribed_symbols - removed_symbols:
+                                    logger.info(f"Symbols closed, removing from cache: {[s.upper() for s in removed_symbols]}")
+                                    with self._ws_lock:
+                                        for sym in removed_symbols:
+                                            self._price_cache.pop(sym, None)
                 except Exception as e:
                     self._ws_connected = False
                     logger.error(f"WebSocket error: {e}")
@@ -159,15 +227,26 @@ class SignalTracker:
             # Combined stream wraps each ticker: {"stream": "...", "data": {...}}
             ticker = data.get('data')
             if ticker is None:
+                logger.debug("WebSocket message missing 'data' field")
                 return
 
             symbol = ticker.get('s', '')
             price_str = ticker.get('c', '')
             if not symbol or not price_str:
+                logger.debug("WebSocket message missing symbol or price")
                 return
 
+            price = float(price_str)
+
             with self._ws_lock:
-                self._price_cache[symbol] = float(price_str)
+                self._price_cache[symbol] = price
+                # Throttle verbose per-tick logs to once every 5 minutes
+                now = time.time()
+                if now - self._last_tick_log > 300:
+                    cache_size = len(self._price_cache)
+                    logger.info(f"WebSocket tick summary: {symbol} = {price} (cached {cache_size} prices)")
+                    self._last_tick_log = now
+
                 self._evaluate_open_signals_locked()
         except json.JSONDecodeError:
             pass
@@ -180,11 +259,18 @@ class SignalTracker:
         if not open_signals:
             return
 
+        # Throttle evaluation INFO logs to once every 5 minutes to avoid noisy output
+        now = time.time()
+        if now - self._last_eval_log > 300:
+            logger.info(f"WebSocket evaluating {len(open_signals)} open signal(s) against {len(self._price_cache)} cached prices")
+            self._last_eval_log = now
         changed = False
         for sig in open_signals:
             price = self._price_cache.get(sig['symbol'])
             if price is None:
+                logger.debug(f"  No cached price for {sig['symbol']}, skipping")
                 continue
+            logger.debug(f"  Checking {sig['symbol']}: current={price}, entry={sig['entry']}, SL={sig['sl']}, TP1={sig['tp1']}")
             try:
                 self._evaluate(sig, price)
                 # Check if status changed (signal closed)
@@ -212,7 +298,8 @@ class SignalTracker:
                 # Backup corrupted file (Bug #34 fix)
                 backup_name = f"signals_corrupted_{int(time.time())}.json"
                 try:
-                    os.rename(SIGNALS_FILE, backup_name)
+                    import shutil
+                    shutil.copy2(SIGNALS_FILE, backup_name)
                     logger.warning(f"Corrupted file backed up to {backup_name}")
                 except Exception as be:
                     logger.error(f"Could not backup corrupted file: {be}")
@@ -240,8 +327,29 @@ class SignalTracker:
     def has_open_signal(self, symbol: str) -> bool:
         """Check if a symbol already has an open signal (including partial TP hits)"""
         for sig in self.signals:
-            if sig['symbol'] == symbol and sig['status'] in ('OPEN', 'TP1', 'TP2'):
+            if sig['symbol'] == symbol and sig['status'] in ('OPEN', 'TP1', 'TP2', 'TP3'):
                 return True
+        return False
+
+    def has_recent_signal(self, symbol: str, minutes: int = 30) -> bool:
+        """Check if a signal for this symbol was fired within the last N minutes.
+
+        This prevents duplicate signals when startup scan and scheduled scan
+        run close together (e.g., bot starts at :04, scheduler fires at :05).
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        for sig in self.signals:
+            if sig['symbol'] != symbol:
+                continue
+            fired_at = sig.get('fired_at')
+            if not fired_at:
+                continue
+            try:
+                fired_dt = datetime.fromisoformat(fired_at)
+                if fired_dt >= cutoff:
+                    return True
+            except (ValueError, TypeError):
+                continue
         return False
 
     def _save_to_split_files(self):
@@ -298,7 +406,7 @@ class SignalTracker:
             'rr3': signal['rr3'],
             'rr_max': signal['rr_max'],
             'quality_score': signal['quality_score'],
-            'fired_at': datetime.utcnow().isoformat(),
+            'fired_at': datetime.now(timezone.utc).isoformat(),
             'status': 'OPEN',       # OPEN | TP1 | TP2 | TP3 | TP4 | SL | BREAKEVEN | EXPIRED
             'outcome': None,        # WIN | LOSS | PARTIAL | BREAKEVEN | EXPIRED
             'closed_at': None,
@@ -346,16 +454,12 @@ class SignalTracker:
 
     def check_open_signals(self):
         """Called every 5 min as fallback — checks if any open signal hit TP or SL"""
-        # Only run REST poll if WebSocket is currently disconnected
-        if self._ws_connected:
-            return
-
         open_signals = [s for s in self.signals if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')]
         if not open_signals:
             return
 
-        logger.info(f"Fallback REST monitor: {len(open_signals)} open signals...")
-
+        # Always run REST poll as a safety check, even if WebSocket is connected
+        # This catches any signals that might have been missed by WebSocket
         prices = self.get_all_prices()
         if not prices:
             logger.warning("Failed to fetch prices, skipping monitor cycle")
@@ -364,23 +468,29 @@ class SignalTracker:
         with self._ws_lock:
             # Also update the price cache from REST
             self._price_cache.update(prices)
+            evaluated = 0
             for sig in open_signals:
                 try:
                     price = prices.get(sig['symbol'])
                     if price is None:
                         continue
                     self._evaluate(sig, price)
+                    evaluated += 1
                 except Exception as e:
                     logger.warning(f"Monitor error for {sig['id']}: {e}")
 
             self._save()
+            if self._ws_connected:
+                logger.debug(f"REST safety check: evaluated {evaluated} signals via REST fallback")
+            else:
+                logger.info(f"Fallback REST monitor: evaluated {evaluated} open signals")
 
     def is_on_cooldown(self, symbol: str) -> bool:
         """Check if a symbol is still in cooldown period"""
         until = self.cooldown.get(symbol)
         if until is None:
             return False
-        if datetime.utcnow() >= until:
+        if datetime.now(timezone.utc) >= until:
             del self.cooldown[symbol]
             return False
         return True
@@ -397,9 +507,9 @@ class SignalTracker:
             if tp == 'tp1':
                 total_rr += sig['rr1'] * 0.40
             elif tp == 'tp2':
-                total_rr += sig.get('rr2', sig['rr1'] * 1.33) * 0.30
+                total_rr += sig.get('rr2', 2.0) * 0.30
             elif tp == 'tp3':
-                total_rr += sig.get('rr3', sig['rr1'] * 1.67) * 0.20
+                total_rr += sig.get('rr3', 2.5) * 0.20
             elif tp == 'tp4':
                 total_rr += sig['rr_max'] * 0.10
 
@@ -420,10 +530,12 @@ class SignalTracker:
 
         try:
             fired_at = datetime.fromisoformat(sig['fired_at'])
-            # Ensure both datetimes are naive (no timezone) for safe subtraction
-            if fired_at.tzinfo is not None:
-                fired_at = fired_at.replace(tzinfo=None)
-            minutes_open = (datetime.utcnow() - fired_at).total_seconds() / 60
+            # Convert to UTC timezone-aware if naive
+            if fired_at.tzinfo is None:
+                fired_at = fired_at.replace(tzinfo=timezone.utc)
+            # Get current time in UTC
+            now = datetime.now(timezone.utc)
+            minutes_open = (now - fired_at).total_seconds() / 60
         except (ValueError, TypeError) as e:
             logger.error(f"Signal {sig.get('id')}: Invalid fired_at timestamp: {e}")
             minutes_open = 0
@@ -444,10 +556,10 @@ class SignalTracker:
                 # Blended RR: 50% at TP1 (rr1) + remaining at breakeven (0)
                 # If TP2 was also hit: 50% at TP1 + 50% at TP2 = full win, not breakeven
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
-                sig['closed_at'] = datetime.utcnow().isoformat()
+                sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
                 self._send_outcome(sig, price)
-                self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
+                self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: Breakeven exit triggered at {price}")
                 return
@@ -456,10 +568,10 @@ class SignalTracker:
                 sig['status'] = 'BREAKEVEN'
                 sig['outcome'] = 'BREAKEVEN'
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
-                sig['closed_at'] = datetime.utcnow().isoformat()
+                sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
                 self._send_outcome(sig, price)
-                self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
+                self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: Breakeven exit triggered at {price}")
                 return
@@ -468,13 +580,31 @@ class SignalTracker:
         if minutes_open > self.config.signal_expiration_minutes:
             sig['status'] = 'EXPIRED'
             sig['outcome'] = 'EXPIRED'
-            sig['closed_at'] = datetime.utcnow().isoformat()
+            sig['closed_at'] = datetime.now(timezone.utc).isoformat()
             self._send_outcome(sig, price)
-            self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
+            self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
             self._save()
             return
 
         if direction == 'LONG':
+            # Check SL first (critical: SL must be checked before TPs)
+            if not sig.get('sl_hit') and price <= sig['sl']:
+                sig['sl_hit'] = True
+                if sig.get('tp1_hit') and sig.get('sl_at_breakeven'):
+                    sig['status'] = 'BREAKEVEN'
+                    sig['outcome'] = 'BREAKEVEN'
+                    sig['max_rr_hit'] = self._calculate_blended_rr(sig)
+                else:
+                    sig['status'] = 'SL'
+                    sig['outcome'] = 'LOSS'
+                    sig['max_rr_hit'] = -1
+                sig['closed_at'] = datetime.now(timezone.utc).isoformat()
+                sig['minutes_to_close'] = round(minutes_open)
+                self._send_outcome(sig, price)
+                self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
+                self._save()
+                return
+
             # Check TPs (highest first to capture best outcome)
             # 4-TP system: TP1, TP2, TP3, TP4
             if not sig.get('tp4_hit') and price >= sig['tp4']:
@@ -486,10 +616,10 @@ class SignalTracker:
                 sig['outcome'] = 'WIN'
                 sig['tps_hit'] = ['tp1', 'tp2', 'tp3', 'tp4']
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
-                sig['closed_at'] = datetime.utcnow().isoformat()
+                sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
                 self._send_outcome(sig, price)
-                self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
+                self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: TP4 hit at {price}")
                 return
@@ -536,7 +666,9 @@ class SignalTracker:
                 self._send_outcome(sig, price)
                 self._save()
 
-            elif not sig.get('sl_hit') and price <= sig['sl']:
+        else:  # SHORT
+            # Check SL first (critical: SL must be checked before TPs)
+            if not sig.get('sl_hit') and price >= sig['sl']:
                 sig['sl_hit'] = True
                 if sig.get('tp1_hit') and sig.get('sl_at_breakeven'):
                     sig['status'] = 'BREAKEVEN'
@@ -546,13 +678,15 @@ class SignalTracker:
                     sig['status'] = 'SL'
                     sig['outcome'] = 'LOSS'
                     sig['max_rr_hit'] = -1
-                sig['closed_at'] = datetime.utcnow().isoformat()
+                sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
                 self._send_outcome(sig, price)
-                self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
+                self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
+                logger.info(f"{sig['symbol']}: SL hit at {price}")
+                return
 
-        else:  # SHORT
+            # Check TPs (highest first to capture best outcome)
             if not sig.get('tp4_hit') and price <= sig['tp4']:
                 sig['tp4_hit'] = True
                 sig['tp3_hit'] = True
@@ -562,10 +696,10 @@ class SignalTracker:
                 sig['outcome'] = 'WIN'
                 sig['tps_hit'] = ['tp1', 'tp2', 'tp3', 'tp4']
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
-                sig['closed_at'] = datetime.utcnow().isoformat()
+                sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
                 self._send_outcome(sig, price)
-                self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
+                self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: TP4 hit at {price}")
                 return
@@ -611,24 +745,52 @@ class SignalTracker:
                 self._send_outcome(sig, price)
                 self._save()
 
-            elif not sig.get('sl_hit') and price >= sig['sl']:
-                sig['sl_hit'] = True
-                if sig.get('tp1_hit') and sig.get('sl_at_breakeven'):
-                    sig['status'] = 'BREAKEVEN'
-                    sig['outcome'] = 'BREAKEVEN'
-                    sig['max_rr_hit'] = self._calculate_blended_rr(sig)
-                else:
-                    sig['status'] = 'SL'
-                    sig['outcome'] = 'LOSS'
-                    sig['max_rr_hit'] = -1
-                sig['closed_at'] = datetime.utcnow().isoformat()
-                sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
-                self.cooldown[sig['symbol']] = datetime.utcnow() + timedelta(hours=4)
-                self._save()
-
     # ─── Outcome Alert ────────────────────────────────────────────────────────
 
     def _send_outcome(self, sig: dict, current_price: float):
         # Outcome alerts disabled - only Cornix signals are sent to Telegram
         pass
+
+    # ─── Symbol-Specific Statistics ─────────────────────────────────────────
+
+    def get_symbol_stats(self, symbol: str, lookback: int = 20) -> dict:
+        """Get win rate for a symbol over last N closed trades"""
+        closed_statuses = ('TP4', 'TP3', 'TP2', 'TP1', 'WIN', 'SL', 'BREAKEVEN', 'EXPIRED')
+        closed = [
+            s for s in self.signals
+            if s['symbol'] == symbol and s['status'] in closed_statuses
+        ]
+        recent = closed[-lookback:]
+
+        if not recent:
+            return {'wins': 0, 'total': 0, 'win_rate': 0.5}
+
+        wins = sum(1 for s in recent if s['outcome'] in ('WIN', 'TP4'))
+        total = len(recent)
+        return {
+            'wins': wins,
+            'total': total,
+            'win_rate': wins / total if total > 0 else 0.5
+        }
+
+    def should_skip_symbol(self, symbol: str, min_win_rate: float = 0.40) -> bool:
+        """Skip symbols with poor recent performance"""
+        stats = self.get_symbol_stats(symbol, lookback=20)
+        if stats['total'] >= 5 and stats['win_rate'] < min_win_rate:
+            logger.warning(
+                f"Skipping {symbol}: win rate {stats['win_rate']:.1%} "
+                f"below threshold {min_win_rate:.1%} (last {stats['total']} trades)"
+            )
+            return True
+        return False
+
+    def get_worst_symbols(self, min_trades: int = 5, limit: int = 5) -> list:
+        """Return symbols with lowest win rates"""
+        symbols = set(s['symbol'] for s in self.signals)
+        stats = []
+        for sym in symbols:
+            s = self.get_symbol_stats(sym, lookback=20)
+            if s['total'] >= min_trades:
+                stats.append({'symbol': sym, **s})
+
+        return sorted(stats, key=lambda x: x['win_rate'])[:limit]

@@ -71,27 +71,36 @@ export default function AnalyticsPage() {
   const [filterSymbol, setFilterSymbol] = useState("ALL");
 
   useEffect(() => {
+    let isMounted = true;
+
     async function fetchData() {
       try {
         const [allSignals, analyticsData] = await Promise.all([
           getAllSignals().catch(() => []),
           getAnalyticsSummary().catch(() => null),
         ]);
-        // Filter out OPEN signals for analytics (same as dashboard non_open)
-        const nonOpen = allSignals.filter((s: Signal) => s.status !== "OPEN");
+        if (!isMounted) return;
+
+        // Filter out OPEN and partial (TP1/TP2/TP3) signals for analytics — only fully closed trades
+        const closedStatuses = ["TP4", "SL", "BREAKEVEN", "EXPIRED", "WIN"];
+        const nonOpen = allSignals.filter((s: Signal) => closedStatuses.includes(s.status));
         setSignals(nonOpen);
         setAnalytics(analyticsData);
       } catch (err) {
+        if (!isMounted) return;
         setError(err instanceof Error ? err.message : "Failed to fetch analytics");
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
     fetchData();
 
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   // Apply filters
@@ -140,8 +149,10 @@ export default function AnalyticsPage() {
       const wins = dirSignals.filter((s) => ["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)).length;
       const losses = dirSignals.filter((s) => s.status === "SL").length;
       const be = dirSignals.filter((s) => s.status === "BREAKEVEN").length;
+      const expired = dirSignals.filter((s) => s.status === "EXPIRED").length;
+      // Win rate excludes BE and EXPIRED (only counts wins and losses)
       const wr = (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : "0.0";
-      return { direction: dir, wins, losses, breakevens: be, total: dirSignals.length, winRate: parseFloat(wr) };
+      return { direction: dir, wins, losses, breakevens: be, expired, total: dirSignals.length, winRate: parseFloat(wr) };
     });
   }, [filteredSignals]);
 

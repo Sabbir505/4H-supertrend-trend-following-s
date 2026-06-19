@@ -3,8 +3,8 @@ Signal Engine v4 — Triple Confirmation Trend System (4-TP)
 4-TP incremental closing system:
   - TP1 at 1.5x SL distance (1.5:1 RR) — close 40%
   - TP2 at 2.0x SL distance (2.0:1 RR) — close 30%
-  - TP3 at 2.5x SL distance (2.5:1 RR) — close 20%
-  - TP4 at 3.0x SL distance (3.0:1 RR) — close 10%
+  - TP3 at 3.0x SL distance (3.0:1 RR) — close 20%
+  - TP4 at 4.0x SL distance (4.0:1 RR) — close 10%
   - SL = 1.0x ATR (tighter stops)
   - ADX threshold 25
   - Volume > 1.2x MA
@@ -134,6 +134,27 @@ class SignalEngine:
         else:
             return 'NEUTRAL'
 
+    # ─── Adaptive TP Levels ─────────────────────────────────────────────────
+
+    def get_adaptive_tp_multipliers(self, atr: float, atr_ma: float) -> list:
+        """Adjust TP levels based on volatility regime"""
+        if atr <= 0 or atr_ma <= 0:
+            return [1.5, 2.0, 2.5, 3.0]
+
+        volatility_ratio = atr / atr_ma
+
+        if volatility_ratio > 1.5:
+            # High volatility - wider TPs
+            logger.debug(f"High volatility ({volatility_ratio:.2f}), using wider TPs")
+            return [2.0, 2.5, 3.0, 4.0]
+        elif volatility_ratio > 1.2:
+            # Elevated volatility
+            logger.debug(f"Elevated volatility ({volatility_ratio:.2f})")
+            return [1.75, 2.25, 2.75, 3.5]
+        else:
+            # Normal volatility
+            return [1.5, 2.0, 3.0, 4.0]
+
     # ─── Signal Generation (1H) ──────────────────────────────────────────────
 
     def generate_signal(self, df: pd.DataFrame, symbol: str) -> dict | None:
@@ -142,8 +163,8 @@ class SignalEngine:
         4-TP system:
           - TP1 at 1.5x SL (1.5:1 RR), close 40%
           - TP2 at 2.0x SL (2.0:1 RR), close 30%
-          - TP3 at 2.5x SL (2.5:1 RR), close 20%
-          - TP4 at 3.0x SL (3.0:1 RR), close 10%
+          - TP3 at 3.0x SL (3.0:1 RR), close 20%
+          - TP4 at 4.0x SL (4.0:1 RR), close 10%
         """
         if len(df) < 60:
             return None
@@ -204,12 +225,12 @@ class SignalEngine:
         direction = None
 
         if (ema_bullish and
-                50 < last_rsi < 75 and
+                40 < last_rsi < 80 and
                 macd_bullish):
             direction = 'LONG'
 
         elif (ema_bearish and
-              25 < last_rsi < 50 and
+              20 < last_rsi < 60 and
               macd_bearish):
             direction = 'SHORT'
 
@@ -218,6 +239,11 @@ class SignalEngine:
 
         # ── SL/TP Calculation using config multipliers ─────────────────
         sl_distance = last_atr * self.config.atr_sl_multiplier
+
+        # Validate ATR before using in calculations
+        if sl_distance <= 0:
+            logger.warning(f"{symbol}: Invalid SL distance ({sl_distance}), skipping signal")
+            return None
 
         if direction == 'LONG':
             entry = price
@@ -242,6 +268,11 @@ class SignalEngine:
         # ── Quality Score (v5: adjusted based on backtest data) ───────────────
         score = 0
 
+        # Early ATR check before scoring
+        if last_atr <= 0:
+            logger.warning(f"{symbol}: ATR is {last_atr}, skipping signal (zero volatility)")
+            return None
+
         # RSI quality: reward optimal range proximity
         # For LONG: ideal is 60-65 (strong but not overbought)
         # For SHORT: ideal is 35-40 (weak but not oversold)
@@ -255,9 +286,6 @@ class SignalEngine:
             score += max(0, 25 - rsi_dist * 1.5)
 
         # MACD histogram strength (not just direction)
-        if last_atr <= 0:
-            logger.warning(f"{symbol}: ATR is {last_atr}, skipping signal (zero volatility)")
-            return None
         hist_strength = min(abs(last_hist) / last_atr * 10, 30)
         score += hist_strength  # Stronger histogram = higher score
 
@@ -305,7 +333,7 @@ class SignalEngine:
             'rr_max':        rr_max,
             'rsi':           round(last_rsi, 1),
             'adx':           round(last_adx, 1),
-            'macd_direction': True,   # MACD histogram aligned with trade direction
+            'macd_direction': 'LONG' if last_hist > 0 else 'SHORT',  # Direction of MACD histogram
             'vol_confirmed': True,
             'vol_ratio':     round(vol_ratio, 2),
             'atr':           fmt(last_atr),

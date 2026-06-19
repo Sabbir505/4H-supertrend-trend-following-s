@@ -3,8 +3,8 @@ Backtester v4 — Tests the 4-TP Incremental Closing System
 4-TP system:
   - TP1 at 1.5x SL (1.5:1 RR) — close 40%
   - TP2 at 2.0x SL (2.0:1 RR) — close 30%
-  - TP3 at 2.5x SL (2.5:1 RR) — close 20%
-  - TP4 at 3.0x SL (3.0:1 RR) — close 10%
+  - TP3 at 3.0x SL (3.0:1 RR) — close 20%
+  - TP4 at 4.0x SL (4.0:1 RR) — close 10%
   - SL = 1.0x ATR
   - ADX filter 25, Volume > 1.2x MA
   - MACD histogram direction + min strength
@@ -31,11 +31,14 @@ import pandas as pd
 import numpy as np
 import time
 import json
+import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 from signals import SignalEngine
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 BINANCE_URL = "https://api.binance.com"
 cfg = Config()
@@ -66,7 +69,9 @@ class Trade:
     tp1_hit: bool = False
     tp2_hit: bool = False
     tp3_hit: bool = False
+    tp4_hit: bool = False
     sl_at_breakeven: bool = False
+    max_rr_hit: float = 0.0
 
 
 @dataclass
@@ -100,8 +105,8 @@ class BacktestResult:
 # ─── Data Fetching ─────────────────────────────────────────────────────────────
 
 def fetch_historical(symbol: str, interval: str, months: int) -> pd.DataFrame:
-    end_ms = int(datetime.utcnow().timestamp() * 1000)
-    start_ms = int((datetime.utcnow() - timedelta(days=months * 30)).timestamp() * 1000)
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    start_ms = int((datetime.now(timezone.utc) - timedelta(days=months * 30)).timestamp() * 1000)
 
     all_candles = []
     current_start = start_ms
@@ -125,7 +130,7 @@ def fetch_historical(symbol: str, interval: str, months: int) -> pd.DataFrame:
             current_start = last_ts + 1
             time.sleep(0.1)
         except Exception as e:
-            print(f"  ⚠️  Fetch error {symbol}: {e}")
+            logger.warning(f"Fetch error {symbol}: {e}")
             break
 
     if not all_candles:
@@ -148,6 +153,7 @@ def fetch_historical(symbol: str, interval: str, months: int) -> pd.DataFrame:
 class Backtester:
     def __init__(self):
         self.engine = SignalEngine()
+        self.cfg = Config()
 
     def compute_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         close = df['close']
@@ -162,12 +168,12 @@ class Backtester:
         return d.dropna()
 
     def detect_signal(self, row) -> Optional[str]:
-        # ADX filter — 30 threshold (tightened from 25)
-        if row['adx'] < 30:
+        # ADX filter — 25 threshold (matches signals.py)
+        if row['adx'] < 25:
             return None
 
-        # Volume filter — must be > 1.5x average (tightened from 1.2x)
-        if row['volume'] <= row['vol_ma'] * 1.5:
+        # Volume filter — must be > 1.2x average (matches signals.py)
+        if row['volume'] <= row['vol_ma'] * 1.2:
             return None
 
         ema_bull = row['ema21'] > row['ema55']
@@ -226,19 +232,20 @@ class Backtester:
         atr     = signal_row['atr']
         sl_dist = atr * 1.0
 
-        # 4-TP system
+        # 4-TP system - Use config multipliers
+        cfg = self.cfg
         if direction == 'LONG':
             sl  = entry - sl_dist
-            tp1 = entry + sl_dist * 1.5
-            tp2 = entry + sl_dist * 2.0
-            tp3 = entry + sl_dist * 2.5
-            tp4 = entry + sl_dist * 3.0
+            tp1 = entry + sl_dist * cfg.atr_tp1_multiplier
+            tp2 = entry + sl_dist * cfg.atr_tp2_multiplier
+            tp3 = entry + sl_dist * cfg.atr_tp3_multiplier
+            tp4 = entry + sl_dist * cfg.atr_tp4_multiplier
         else:
             sl  = entry + sl_dist
-            tp1 = entry - sl_dist * 1.5
-            tp2 = entry - sl_dist * 2.0
-            tp3 = entry - sl_dist * 2.5
-            tp4 = entry - sl_dist * 3.0
+            tp1 = entry - sl_dist * cfg.atr_tp1_multiplier
+            tp2 = entry - sl_dist * cfg.atr_tp2_multiplier
+            tp3 = entry - sl_dist * cfg.atr_tp3_multiplier
+            tp4 = entry - sl_dist * cfg.atr_tp4_multiplier
 
         trade = Trade(
             symbol=symbol, direction=direction,
@@ -455,8 +462,8 @@ class Backtester:
         result.wins   = len(wins)
         result.losses = len(losses)
         result.breakevens = len(breakevens)
-        # Bug fix: Breakevens are not wins - report win rate as pure wins only
-        result.win_rate = round(len(wins) / result.total_trades * 100, 1)
+        # Win rate: wins / (wins + losses) per CLAUDE.md Rule 7 (excludes breakevens)
+        result.win_rate = round(len(wins) / (len(wins) + len(losses)) * 100, 1) if (len(wins) + len(losses)) > 0 else 0.0
 
         result.tp1_rate = round(sum(1 for t in valid if t.outcome == 'TP1') / result.total_trades * 100, 1)
         result.tp2_rate = round(sum(1 for t in valid if t.outcome == 'TP2') / result.total_trades * 100, 1)
@@ -479,9 +486,13 @@ class Backtester:
         shorts = [t for t in valid if t.direction == 'SHORT']
         result.long_trades  = len(longs)
         result.short_trades = len(shorts)
-        # Long/short win rate includes breakevens for consistency with overall win_rate
-        result.long_win_rate  = round(sum(1 for t in longs  if t.outcome in ('TP1','TP2','TP3','TP4','BREAKEVEN')) / len(longs)  * 100, 1) if longs  else 0
-        result.short_win_rate = round(sum(1 for t in shorts if t.outcome in ('TP1','TP2','TP3','TP4','BREAKEVEN')) / len(shorts) * 100, 1) if shorts else 0
+        # Long/short win rate: wins / (wins + losses) excludes breakevens (consistent with overall win_rate)
+        long_wins = len([t for t in longs if t.outcome in ('TP1','TP2','TP3','TP4')])
+        long_losses = len([t for t in longs if t.outcome == 'SL'])
+        short_wins = len([t for t in shorts if t.outcome in ('TP1','TP2','TP3','TP4')])
+        short_losses = len([t for t in shorts if t.outcome == 'SL'])
+        result.long_win_rate  = round(long_wins / (long_wins + long_losses) * 100, 1) if (long_wins + long_losses) > 0 else 0
+        result.short_win_rate = round(short_wins / (short_wins + short_losses) * 100, 1) if (short_wins + short_losses) > 0 else 0
 
         # Max drawdown
         equity = peak = max_dd = 0.0
@@ -546,7 +557,7 @@ def print_report(results: list, months: int):
         )
 
     print("-" * 90)
-    overall_wr = round((total_wins + total_breakevens) / total_trades * 100, 1) if total_trades else 0
+    overall_wr = round((total_wins) / (total_wins + total_losses) * 100, 1) if (total_wins + total_losses) else 0
     print(f"{'TOTAL':<14}{total_trades:>7}{total_wins:>6}{total_breakevens:>5}{'':>6}{overall_wr:>6.1f}%{'':>8}{total_rr:>9.1f}R")
 
     print(f"\n{'─'*70}")
@@ -820,11 +831,14 @@ def run_directional_backtest(symbols: list, months: int = 6):
                     # Update regime stats - track gross profit/loss separately
                     rs = symbol_regime_stats[current_regime]
                     rs['trades'] += 1
-                    if trade.outcome in ('TP1', 'TP2', 'BREAKEVEN'):
+                    if trade.outcome in ('TP1', 'TP2', 'TP3', 'TP4'):
                         rs['wins'] += 1
-                        rs['gross_profit'] += trade.rr_achieved
+                        rs['gross_profit'] += max(0, trade.rr_achieved)
+                    elif trade.outcome == 'BREAKEVEN':
+                        # Breakeven is neutral - no win, no loss
+                        pass
                     else:
-                        rs['gross_loss'] += trade.rr_achieved  # This is -1.0
+                        rs['gross_loss'] += abs(trade.rr_achieved)  # Loss is positive number for PF calc
                     if trade.outcome == 'TP2':
                         rs['tp2_hits'] += 1
 
@@ -835,7 +849,7 @@ def run_directional_backtest(symbols: list, months: int = 6):
 
         if trades:
             valid = [t for t in trades if t.outcome != 'EXPIRED']
-            wins = [t for t in valid if t.outcome in ('TP1', 'TP2')]
+            wins = [t for t in valid if t.outcome in ('TP1', 'TP2', 'TP3', 'TP4')]
 
             result = {
                 'symbol': symbol,

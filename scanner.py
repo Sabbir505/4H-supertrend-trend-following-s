@@ -154,14 +154,10 @@ class CryptoScanner:
             ])
 
             # Bug #16 fix: Check if last candle is actually closed before discarding
-            # Use Binance server time from response header to avoid local clock skew
-            server_time_ms = int(response.headers.get('X-MBX-USED-WEIGHT-1M', 0)) or None
-            if server_time_ms:
-                now = pd.to_datetime(server_time_ms, unit='ms', utc=True)
-            else:
-                now = pd.Timestamp.now(tz='UTC')
-            # Add 5s buffer to account for minor clock differences
+            # Use close_time from the last candle to determine if it's complete
             last_close_time = pd.to_datetime(df['close_time'].iloc[-1], unit='ms', utc=True)
+            now = pd.Timestamp.now(tz='UTC')
+            # If last close time is in the future, the candle is still open
             if last_close_time > now + pd.Timedelta(seconds=5):
                 # Last candle is still open, exclude it
                 df = df.iloc[:-1]
