@@ -16,7 +16,7 @@ function StatCard({
   value,
   subtitle,
   sparkData,
-  valueColor = "text-white",
+  valueColor = "text-foreground",
 }: {
   title: string;
   value: string;
@@ -26,14 +26,14 @@ function StatCard({
 }) {
   const isPositive = sparkData.length >= 2 && sparkData[sparkData.length - 1] >= sparkData[sparkData.length - 2];
   const chartData = sparkData.map((v, i) => ({ v, i }));
-  const chartColor = isPositive ? "#10b981" : "#ef4444";
+  const chartColor = isPositive ? "var(--chart-1)" : "var(--chart-4)";
 
   return (
-    <Card className="bg-[#111827] border-[#1e293b]">
+    <Card className="">
       <CardContent className="p-5">
-        <p className="text-xs text-slate-500 uppercase tracking-wide">{title}</p>
+        <p className="text-xs text-muted-foreground uppercase tracking-wide">{title}</p>
         <p className={`text-2xl font-bold mt-1 ${valueColor}`}>{value}</p>
-        <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
         <div className="h-10 mt-2">
           <ResponsiveContainer width="100%" height={40}>
             <AreaChart data={chartData}>
@@ -181,12 +181,12 @@ export default function TradeHistoryPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white">Trade History</h1>
-            <p className="text-sm text-slate-400 mt-1">
+            <h1 className="text-2xl font-semibold text-foreground">Trade History</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               Review and analyze your past trading signals
             </p>
           </div>
-          <div className="flex items-center gap-2 text-sm text-slate-400">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <span>{filteredSignals.length} trades found</span>
           </div>
         </div>
@@ -198,51 +198,51 @@ export default function TradeHistoryPage() {
             value={`${winRate}%`}
             subtitle={`${winCount}W / ${lossCount}L / ${beCount}BE`}
             sparkData={winRateHistory}
-            valueColor={parseFloat(winRate) >= 50 ? "text-emerald-400" : "text-red-400"}
+            valueColor={parseFloat(winRate) >= 50 ? "text-emerald-400" : "text-destructive"}
           />
           <StatCard
             title="Avg RR"
             value={`${parseFloat(avgRR) >= 0 ? "+" : ""}${avgRR}`}
             subtitle="Average Risk-Reward"
             sparkData={rrHistory}
-            valueColor={parseFloat(avgRR) >= 0 ? "text-emerald-400" : "text-red-400"}
+            valueColor={parseFloat(avgRR) >= 0 ? "text-emerald-400" : "text-destructive"}
           />
           <StatCard
             title="Total Trades"
             value={String(totalTrades)}
             subtitle="Completed Trades"
             sparkData={tradeHistory}
-            valueColor="text-white"
+            valueColor="text-foreground"
           />
           <StatCard
             title="Total RR"
             value={`${parseFloat(totalRR) >= 0 ? "+" : ""}${totalRR}`}
             subtitle="Cumulative RR"
             sparkData={totalRRHistory}
-            valueColor={parseFloat(totalRR) >= 0 ? "text-emerald-400" : "text-red-400"}
+            valueColor={parseFloat(totalRR) >= 0 ? "text-emerald-400" : "text-destructive"}
           />
         </div>
 
         {/* Filters */}
-        <Card className="bg-[#111827] border-[#1e293b]">
+        <Card className="">
           <CardContent className="p-4">
             <div className="flex items-center gap-4">
               {/* Search */}
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   placeholder="Search by symbol, direction, status..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-[#1e293b] border border-[#1e293b] rounded-lg pl-9 pr-4 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500/50"
+                  className="w-full bg-muted border border-border rounded-lg pl-9 pr-4 py-2 text-sm text-foreground placeholder-slate-400 focus:outline-none focus:border-primary/50"
                 />
               </div>
               {/* Outcome */}
               <select
                 value={filterOutcome}
                 onChange={(e) => setFilterOutcome(e.target.value)}
-                className="bg-[#1e293b] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                className="bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
               >
                 {outcomes.map((o) => (
                   <option key={o} value={o}>
@@ -254,7 +254,7 @@ export default function TradeHistoryPage() {
               <select
                 value={filterDirection}
                 onChange={(e) => setFilterDirection(e.target.value)}
-                className="bg-[#1e293b] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                className="bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
               >
                 {directions.map((d) => (
                   <option key={d} value={d}>
@@ -266,7 +266,7 @@ export default function TradeHistoryPage() {
               <select
                 value={filterStrength}
                 onChange={(e) => setFilterStrength(e.target.value)}
-                className="bg-[#1e293b] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                className="bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
               >
                 {strengths.map((s) => (
                   <option key={s} value={s}>
@@ -283,7 +283,7 @@ export default function TradeHistoryPage() {
                     setFilterDirection("ALL");
                     setFilterStrength("ALL");
                   }}
-                  className="text-sm text-emerald-400 hover:text-emerald-300 whitespace-nowrap"
+                  className="text-sm text-primary hover:text-primary/80 whitespace-nowrap"
                 >
                   Clear Filters
                 </button>
@@ -293,38 +293,51 @@ export default function TradeHistoryPage() {
         </Card>
 
         {/* Trade Table */}
-        <Card className="bg-[#111827] border-[#1e293b]">
+        <Card className="">
           <CardContent className="p-0">
             {loading ? (
-              <div className="flex items-center justify-center h-64 text-slate-400">
-                Loading trade history...
+              <div className="animate-pulse p-5 space-y-4">
+                {[...Array(8)].map((_, i) => (
+                  <div key={i} className="flex items-center gap-4">
+                    <div className="h-4 w-24 bg-muted rounded" />
+                    <div className="h-4 w-16 bg-muted rounded" />
+                    <div className="h-4 w-16 bg-muted rounded" />
+                    <div className="h-4 w-16 bg-muted rounded" />
+                    <div className="h-4 w-16 bg-muted rounded" />
+                    <div className="h-4 w-16 bg-muted rounded" />
+                    <div className="h-4 w-12 bg-muted rounded" />
+                    <div className="h-4 w-20 bg-muted rounded" />
+                  </div>
+                ))}
               </div>
             ) : error ? (
-              <div className="flex items-center justify-center h-64 text-red-400">
+              <div className="flex items-center justify-center h-64 text-destructive">
                 Error: {error}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-[#1e293b]">
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Symbol</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Direction</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Entry</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">SL</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP1</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">TP2</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">RR</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Quality</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Outcome</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Strength</th>
-                      <th className="text-left text-xs text-slate-500 uppercase tracking-wide px-5 py-3">Closed</th>
+                    <tr className="border-b border-border">
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-3 py-3">Symbol</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">Direction</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">Entry</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">SL</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">TP1</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">TP2</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">TP3</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">TP4</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">RR</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">Quality</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">Outcome</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">Strength</th>
+                      <th className="text-left text-xs text-muted-foreground uppercase tracking-wide px-2 py-3">Closed</th>
                     </tr>
                   </thead>
                   <tbody>
                     {paginatedSignals.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="text-center py-12 text-slate-400">
+                        <td colSpan={13} className="text-center py-12 text-muted-foreground">
                           No trades found matching your filters
                         </td>
                       </tr>
@@ -342,39 +355,41 @@ export default function TradeHistoryPage() {
                         return (
                           <tr
                             key={signal.id}
-                            className="border-b border-[#1e293b]/50 hover:bg-[#1e293b]/30 transition-colors"
+                            className="border-b border-border/50 hover:bg-muted/30 transition-colors"
                           >
-                            <td className="px-5 py-3">
-                              <span className="text-sm font-semibold text-white">{signal.symbol}</span>
+                            <td className="px-3 py-2.5">
+                              <span className="text-sm font-semibold text-foreground">{signal.symbol}</span>
                             </td>
-                            <td className="px-5 py-3">
+                            <td className="px-2 py-2.5">
                               <Badge
                                 variant="outline"
                                 className={
                                   isLong
                                     ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/10 text-xs"
-                                    : "border-red-500/30 text-red-400 bg-red-500/10 text-xs"
+                                    : "border-red-500/30 text-destructive bg-red-500/10 text-xs"
                                 }
                               >
                                 {isLong ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
                                 {signal.direction}
                               </Badge>
                             </td>
-                            <td className="px-5 py-3 text-sm text-white">{formatPrice(signal.entry)}</td>
-                            <td className="px-5 py-3 text-sm text-red-400">{formatPrice(signal.sl)}</td>
-                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp1)}</td>
-                            <td className="px-5 py-3 text-sm text-emerald-400">{formatPrice(signal.tp2)}</td>
-                            <td className="px-5 py-3">
-                              <span className={`text-sm font-bold ${rr > 0 ? "text-emerald-400" : rr < 0 ? "text-red-400" : "text-slate-400"}`}>
+                            <td className="px-2 py-2.5 text-xs text-foreground">{formatPrice(signal.entry)}</td>
+                            <td className="px-2 py-2.5 text-xs text-destructive">{formatPrice(signal.sl)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp1)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp2)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp3)}</td>
+                            <td className="px-2 py-2.5 text-xs text-emerald-400">{formatPrice(signal.tp4)}</td>
+                            <td className="px-2 py-2.5">
+                              <span className={`text-xs font-bold ${rr > 0 ? "text-emerald-400" : rr < 0 ? "text-destructive" : "text-muted-foreground"}`}>
                                 {rr > 0 ? "+" : ""}{rr.toFixed(2)}R
                               </span>
                             </td>
-                            <td className="px-5 py-3">
-                              <span className={`text-sm font-medium ${signal.quality_score >= 70 ? "text-emerald-400" : signal.quality_score >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                            <td className="px-2 py-2.5">
+                              <span className={`text-xs font-medium ${signal.quality_score >= 70 ? "text-emerald-400" : signal.quality_score >= 50 ? "text-amber-400" : "text-destructive"}`}>
                                 {signal.quality_score.toFixed(1)}
                               </span>
                             </td>
-                            <td className="px-5 py-3">
+                            <td className="px-2 py-2.5">
                               <Badge
                                 variant="outline"
                                 className={`${outcomeColors[signal.status] || outcomeColors.EXPIRED} text-xs`}
@@ -382,7 +397,7 @@ export default function TradeHistoryPage() {
                                 {signal.status}
                               </Badge>
                             </td>
-                            <td className="px-5 py-3">
+                            <td className="px-2 py-2.5">
                               <Badge
                                 variant="outline"
                                 className={
@@ -394,7 +409,7 @@ export default function TradeHistoryPage() {
                                 {signal.strength || "STANDARD"}
                               </Badge>
                             </td>
-                            <td className="px-5 py-3 text-sm text-slate-400">
+                            <td className="px-2 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                               {closedDate !== "-" ? closedDate : firedDate}
                             </td>
                           </tr>
@@ -408,15 +423,15 @@ export default function TradeHistoryPage() {
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-3 border-t border-[#1e293b]">
-                <span className="text-sm text-slate-400">
+              <div className="flex items-center justify-between px-5 py-3 border-t border-border">
+                <span className="text-sm text-muted-foreground">
                   Showing {(page - 1) * ITEMS_PER_PAGE + 1}-{Math.min(page * ITEMS_PER_PAGE, filteredSignals.length)} of {filteredSignals.length}
                 </span>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setPage(Math.max(1, page - 1))}
                     disabled={page === 1}
-                    className="px-3 py-1 text-sm bg-[#1e293b] rounded text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#2d3748]"
+                    className="px-3 py-1 text-sm bg-muted rounded text-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent"
                   >
                     Previous
                   </button>
@@ -437,8 +452,8 @@ export default function TradeHistoryPage() {
                         onClick={() => setPage(pageNum)}
                         className={`px-3 py-1 text-sm rounded ${
                           page === pageNum
-                            ? "bg-emerald-500 text-white"
-                            : "bg-[#1e293b] text-white hover:bg-[#2d3748]"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-foreground hover:bg-accent"
                         }`}
                       >
                         {pageNum}
@@ -448,7 +463,7 @@ export default function TradeHistoryPage() {
                   <button
                     onClick={() => setPage(Math.min(totalPages, page + 1))}
                     disabled={page === totalPages}
-                    className="px-3 py-1 text-sm bg-[#1e293b] rounded text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#2d3748]"
+                    className="px-3 py-1 text-sm bg-muted rounded text-foreground disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent"
                   >
                     Next
                   </button>

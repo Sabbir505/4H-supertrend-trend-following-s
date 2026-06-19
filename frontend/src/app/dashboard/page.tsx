@@ -2,9 +2,26 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Activity, Target, BarChart3, Zap, Clock, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import {
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Target,
+  BarChart3,
+  Zap,
+  Clock,
+  ArrowUpRight,
+  ArrowDownRight,
+  RefreshCw,
+} from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -19,24 +36,20 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { getDashboardStats, getOpenSignals, getClosedSignals, DashboardStats, Signal } from "@/lib/api";
+import {
+  getDashboardStats,
+  getOpenSignals,
+  getClosedSignals,
+  DashboardStats,
+  Signal,
+} from "@/lib/api";
 import { calculateRR, formatPrice } from "@/lib/utils";
 
-const COLORS = ["#10b981", "#ef4444", "#f59e0b", "#6366f1", "#8b5cf6"];
-
 const outcomeColors: Record<string, string> = {
-  "TP1 Hit": "#10b981",
-  "TP2 Hit": "#10b981",
-  "TP3 Hit": "#10b981",
-  "TP4 Hit": "#10b981",
-  TP1: "#10b981",
-  TP2: "#10b981",
-  TP3: "#10b981",
-  TP4: "#10b981",
-  WIN: "#10b981",
-  SL: "#ef4444",
-  BREAKEVEN: "#f59e0b",
-  EXPIRED: "#6366f1",
+  Loss: "var(--chart-4)",
+  Expired: "var(--chart-5)",
+  Breakeven: "var(--chart-3)",
+  Win: "var(--chart-1)",
 };
 
 export default function DashboardPage() {
@@ -66,7 +79,9 @@ export default function DashboardPage() {
         setLastUpdated(new Date());
         setError(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch dashboard data");
+        setError(
+          err instanceof Error ? err.message : "Failed to fetch dashboard data"
+        );
       } finally {
         setLoading(false);
         isFetching = false;
@@ -74,70 +89,68 @@ export default function DashboardPage() {
     }
 
     fetchData();
-
-    // Auto-refresh every 30 seconds
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Compute outcome distribution from closed signals
-  // Group trades into 4 categories: Loss, Expired, Breakeven, Win
   const outcomeData = useMemo(() => {
     let loss = 0;
     let expired = 0;
     let breakeven = 0;
     let win = 0;
     closedSignals.forEach((s) => {
-      if (s.status === "SL") {
-        loss++;
-      } else if (s.status === "EXPIRED") {
-        expired++;
-      } else if (s.status === "BREAKEVEN") {
-        breakeven++;
-      } else if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)) {
-        win++;
-      }
+      if (s.status === "SL") loss++;
+      else if (s.status === "EXPIRED") expired++;
+      else if (s.status === "BREAKEVEN") breakeven++;
+      else if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)) win++;
     });
     const data = [];
-    if (loss > 0) data.push({ name: "Loss", value: loss, color: "#ef4444" });
-    if (expired > 0) data.push({ name: "Expired", value: expired, color: "#6366f1" });
-    if (breakeven > 0) data.push({ name: "Breakeven", value: breakeven, color: "#f59e0b" });
-    if (win > 0) data.push({ name: "Win", value: win, color: "#10b981" });
+    if (loss > 0) data.push({ name: "Loss", value: loss, color: outcomeColors.Loss });
+    if (expired > 0) data.push({ name: "Expired", value: expired, color: outcomeColors.Expired });
+    if (breakeven > 0) data.push({ name: "Breakeven", value: breakeven, color: outcomeColors.Breakeven });
+    if (win > 0) data.push({ name: "Win", value: win, color: outcomeColors.Win });
     return data;
   }, [closedSignals]);
 
-  // Compute equity curve from closed signals (cumulative RR)
-  // 4-TP incremental closing strategy (40/30/20/10)
   const equityDataWithCumulative = useMemo(() => {
     const sortedClosed = [...closedSignals]
-      .filter(s => s.fired_at || s.closed_at) // Filter out entries with no valid date
-      .sort(
-        (a, b) => {
-          const dateA = a.closed_at || a.fired_at;
-          const dateB = b.closed_at || b.fired_at;
-          if (!dateA || !dateB) return 0;
-          return new Date(dateA).getTime() - new Date(dateB).getTime();
-        }
-      );
+      .filter((s) => s.fired_at || s.closed_at)
+      .sort((a, b) => {
+        const dateA = a.closed_at || a.fired_at;
+        const dateB = b.closed_at || b.fired_at;
+        if (!dateA || !dateB) return 0;
+        return new Date(dateA).getTime() - new Date(dateB).getTime();
+      });
     const equityData = sortedClosed.map((s, index) => {
       const rr = calculateRR(s);
       const date = s.closed_at || s.fired_at;
       const tradeDate = date ? new Date(date) : new Date();
       return {
-        date: tradeDate.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        time: tradeDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        date: tradeDate.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        }),
+        time: tradeDate.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
         rr: parseFloat(rr.toFixed(2)),
         symbol: s.symbol,
-        index: index + 1, // Trade number
+        index: index + 1,
         status: s.status,
         tradeRR: rr,
       };
     });
-    // Calculate cumulative RR using reduce (avoids mutating variables during render)
-    return equityData.reduce<{ result: typeof equityData; runningTotal: number }>(
+    return equityData.reduce<{
+      result: typeof equityData;
+      runningTotal: number;
+    }>(
       (acc, item) => {
         acc.runningTotal += item.tradeRR;
-        acc.result.push({ ...item, rr: parseFloat(acc.runningTotal.toFixed(2)) });
+        acc.result.push({
+          ...item,
+          rr: parseFloat(acc.runningTotal.toFixed(2)),
+        });
         return acc;
       },
       { result: [], runningTotal: 0 }
@@ -147,8 +160,30 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-slate-400">Loading dashboard...</div>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-48 bg-muted rounded-lg" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {[...Array(5)].map((_, i) => (
+              <div
+                key={i}
+                className="bg-card border border-border rounded-xl p-5 space-y-3"
+              >
+                <div className="h-3 w-20 bg-muted rounded" />
+                <div className="h-7 w-16 bg-muted rounded" />
+                <div className="h-3 w-24 bg-muted rounded" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 bg-card border border-border rounded-xl p-5">
+              <div className="h-4 w-40 bg-muted rounded mb-4" />
+              <div className="h-64 bg-muted/50 rounded" />
+            </div>
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="h-4 w-36 bg-muted rounded mb-4" />
+              <div className="h-48 bg-muted/50 rounded" />
+            </div>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -158,46 +193,111 @@ export default function DashboardPage() {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="text-red-400">Error: {error}</div>
+          <div className="text-destructive">Error: {error}</div>
         </div>
       </DashboardLayout>
     );
   }
 
-  // Compute symbol stats from closed signals
-  const symbolStats: Record<string, { total: number; wins: number; losses: number }> = {};
+  const symbolStats: Record<
+    string,
+    { total: number; wins: number; losses: number }
+  > = {};
   closedSignals.forEach((s) => {
-    if (!symbolStats[s.symbol]) symbolStats[s.symbol] = { total: 0, wins: 0, losses: 0 };
+    if (!symbolStats[s.symbol])
+      symbolStats[s.symbol] = { total: 0, wins: 0, losses: 0 };
     symbolStats[s.symbol].total++;
-    if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)) symbolStats[s.symbol].wins++;
+    if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status))
+      symbolStats[s.symbol].wins++;
     if (s.status === "SL") symbolStats[s.symbol].losses++;
   });
   const symbolWinRateData = Object.entries(symbolStats)
     .map(([symbol, data]) => ({
       symbol,
-      winRate: (data.wins + data.losses) > 0 ? parseFloat(((data.wins / (data.wins + data.losses)) * 100).toFixed(1)) : 0,
+      winRate:
+        data.wins + data.losses > 0
+          ? parseFloat(
+              ((data.wins / (data.wins + data.losses)) * 100).toFixed(1)
+            )
+          : 0,
       total: data.total,
     }))
-    .sort((a, b) => b.total - a.total)
+    .filter((s) => s.winRate > 0 || s.total >= 3)
+    .sort((a, b) => b.winRate - a.winRate)
     .slice(0, 8);
 
-  // Recent signals (latest 5)
   const recentSignals = [...closedSignals]
-    .filter(s => s.closed_at || s.fired_at)
+    .filter((s) => s.closed_at || s.fired_at)
     .sort((a, b) => {
       const dateA = a.closed_at || a.fired_at;
       const dateB = b.closed_at || b.fired_at;
       if (!dateA || !dateB) return 0;
-      const timeA = new Date(dateA).getTime();
-      const timeB = new Date(dateB).getTime();
-      if (isNaN(timeA) || isNaN(timeB)) return 0;
-      return timeB - timeA;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
     })
     .slice(0, 5);
 
-  // Compute total RR from closed signals (consistent with equity curve)
-  // Use API total_rr if available, otherwise fall back to equity curve calculation
-  const totalRR = stats?.total_rr ?? (equityDataWithCumulative.length > 0 ? equityDataWithCumulative[equityDataWithCumulative.length - 1].rr : 0);
+  const totalRR =
+    equityDataWithCumulative.length > 0
+      ? equityDataWithCumulative[equityDataWithCumulative.length - 1].rr
+      : 0;
+
+  const tooltipStyle = {
+    backgroundColor: "var(--popover)",
+    border: "1px solid var(--border)",
+    borderRadius: "8px",
+    color: "var(--popover-foreground)",
+  };
+
+  const statCards = [
+    {
+      label: "Total Signals",
+      icon: Activity,
+      iconColor: "text-chart-2",
+      value: stats?.total_signals ?? 0,
+      sub: `${stats?.open_signals ?? 0} open`,
+    },
+    {
+      label: "Win Rate",
+      icon: Target,
+      iconColor: "text-chart-1",
+      value: `${stats?.win_rate?.toFixed(1) ?? "0.0"}%`,
+      valueColor:
+        (stats?.win_rate ?? 0) >= 50
+          ? "text-chart-1"
+          : (stats?.win_rate ?? 0) >= 25
+          ? "text-chart-3"
+          : "text-chart-4",
+      sub: "From closed signals",
+    },
+    {
+      label: "Avg Quality",
+      icon: BarChart3,
+      iconColor: "text-chart-5",
+      value: stats?.avg_quality_score?.toFixed(1) ?? "0.0",
+      valueColor:
+        (stats?.avg_quality_score ?? 0) >= 70 ? "text-chart-1" : "text-chart-3",
+      sub: "Quality score average",
+    },
+    {
+      label: "Total RR",
+      icon: Zap,
+      iconColor: "text-chart-3",
+      value: `${totalRR >= 0 ? "+" : ""}${totalRR.toFixed(2)}`,
+      valueColor: totalRR >= 0 ? "text-chart-1" : "text-chart-4",
+      sub: "Cumulative risk-reward",
+    },
+    {
+      label: "Backtest WR",
+      icon: Clock,
+      iconColor: "text-chart-2",
+      value: `${stats?.overall_backtest_wr?.toFixed(1) ?? "0.0"}%`,
+      valueColor:
+        (stats?.overall_backtest_wr ?? 0) >= 50
+          ? "text-chart-1"
+          : "text-muted-foreground",
+      sub: `${stats?.total_trades_backtest ?? 0} backtest trades`,
+    },
+  ];
 
   return (
     <DashboardLayout>
@@ -205,120 +305,116 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-            <p className="text-sm text-slate-400 mt-1">Trading signal overview and performance</p>
+            <h1 className="text-2xl font-semibold text-foreground">
+              Dashboard
+            </h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Trading signal overview and performance
+            </p>
           </div>
           <div className="flex items-center gap-3">
             {lastUpdated && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-muted-foreground">
                 Updated: {lastUpdated.toLocaleTimeString()}
               </span>
             )}
             <button
               onClick={() => window.location.reload()}
-              className="text-xs text-emerald-400 hover:text-emerald-300"
+              className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
             >
+              <RefreshCw className="w-3 h-3" />
               Refresh
             </button>
           </div>
         </div>
 
-        {/* Top Stats */}
-        <div className="grid grid-cols-5 gap-4">
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-blue-400" />
-                <p className="text-xs text-slate-500 uppercase">Total Signals</p>
-              </div>
-              <p className="text-2xl font-bold text-white mt-2">{stats?.total_signals ?? 0}</p>
-              <p className="text-xs text-slate-400 mt-0.5">{stats?.open_signals ?? 0} open</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-emerald-400" />
-                <p className="text-xs text-slate-500 uppercase">Win Rate</p>
-              </div>
-              <p className={`text-2xl font-bold mt-2 ${(stats?.win_rate ?? 0) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
-                {stats?.win_rate?.toFixed(1) ?? "0.0"}%
-              </p>
-              <p className="text-xs text-slate-400 mt-0.5">From closed signals</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-purple-400" />
-                <p className="text-xs text-slate-500 uppercase">Avg Quality</p>
-              </div>
-              <p className={`text-2xl font-bold mt-2 ${(stats?.avg_quality_score ?? 0) >= 70 ? "text-emerald-400" : "text-amber-400"}`}>
-                {stats?.avg_quality_score?.toFixed(1) ?? "0.0"}
-              </p>
-              <p className="text-xs text-slate-400 mt-0.5">Quality score average</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-400" />
-                <p className="text-xs text-slate-500 uppercase">Total RR</p>
-              </div>
-              <p className={`text-2xl font-bold mt-2 ${totalRR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                {totalRR >= 0 ? "+" : ""}{totalRR.toFixed(2)}
-              </p>
-              <p className="text-xs text-slate-400 mt-0.5">Cumulative risk-reward</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-cyan-400" />
-                <p className="text-xs text-slate-500 uppercase">Backtest WR</p>
-              </div>
-              <p className={`text-2xl font-bold mt-2 ${(stats?.overall_backtest_wr ?? 0) >= 50 ? "text-emerald-400" : "text-slate-400"}`}>
-                {stats?.overall_backtest_wr?.toFixed(1) ?? "0.0"}%
-              </p>
-              <p className="text-xs text-slate-400 mt-0.5">{stats?.total_trades_backtest ?? 0} backtest trades</p>
-            </CardContent>
-          </Card>
+        {/* Stat Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {statCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <Card key={card.label}>
+                <CardContent className="p-5">
+                  <div className="flex items-center gap-2">
+                    <Icon className={`w-4 h-4 ${card.iconColor}`} />
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                      {card.label}
+                    </p>
+                  </div>
+                  <p
+                    className={`text-2xl font-bold mt-2 ${
+                      card.valueColor ?? "text-foreground"
+                    }`}
+                  >
+                    {card.value}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {card.sub}
+                  </p>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
         {/* Charts Row */}
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Equity Curve */}
-          <Card className="bg-[#111827] border-[#1e293b] col-span-2">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Equity Curve (Cumulative RR)</h3>
-              </div>
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                Equity Curve (Cumulative RR)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
               {equityDataWithCumulative.length === 0 ? (
-                <div className="flex items-center justify-center h-64 text-slate-400">
+                <div className="flex items-center justify-center h-64 text-muted-foreground">
                   No closed trades yet
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height={280} minHeight={200}>
                   <AreaChart data={equityDataWithCumulative}>
                     <defs>
-                      <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                      <linearGradient
+                        id="equityGrad"
+                        x1="0"
+                        y1="0"
+                        x2="0"
+                        y2="1"
+                      >
+                        <stop
+                          offset="0%"
+                          stopColor="var(--chart-1)"
+                          stopOpacity={0.3}
+                        />
+                        <stop
+                          offset="100%"
+                          stopColor="var(--chart-1)"
+                          stopOpacity={0}
+                        />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="date" stroke="#64748b" fontSize={11} />
-                    <YAxis stroke="#64748b" fontSize={11} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="var(--border)"
+                    />
+                    <XAxis
+                      dataKey="date"
+                      stroke="var(--muted-foreground)"
+                      fontSize={11}
+                    />
+                    <YAxis
+                      stroke="var(--muted-foreground)"
+                      fontSize={11}
+                    />
                     <Tooltip
-                      contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                      labelStyle={{ color: "#f8fafc" }}
-                      itemStyle={{ color: "#f8fafc" }}
+                      contentStyle={tooltipStyle}
                       formatter={(value, name, props) => {
                         const payload = props?.payload;
                         if (payload) {
                           return [
                             `${payload.rr >= 0 ? "+" : ""}${payload.rr}R (Trade: ${payload.tradeRR >= 0 ? "+" : ""}${payload.tradeRR}R)`,
-                            `${payload.symbol} - ${payload.status}`
+                            `${payload.symbol} - ${payload.status}`,
                           ];
                         }
                         return [value, name];
@@ -333,7 +429,7 @@ export default function DashboardPage() {
                     <Area
                       type="monotone"
                       dataKey="rr"
-                      stroke="#10b981"
+                      stroke="var(--chart-1)"
                       strokeWidth={2}
                       fill="url(#equityGrad)"
                     />
@@ -344,18 +440,22 @@ export default function DashboardPage() {
           </Card>
 
           {/* Outcome Distribution */}
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Outcome Distribution</h3>
-              </div>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Outcome Distribution</CardTitle>
+            </CardHeader>
+            <CardContent>
               {outcomeData.length === 0 ? (
-                <div className="flex items-center justify-center h-64 text-slate-400">
+                <div className="flex items-center justify-center h-64 text-muted-foreground">
                   No closed trades yet
                 </div>
               ) : (
                 <>
-                  <ResponsiveContainer width="100%" height={200} minHeight={150}>
+                  <ResponsiveContainer
+                    width="100%"
+                    height={200}
+                    minHeight={150}
+                  >
                     <PieChart>
                       <Pie
                         data={outcomeData}
@@ -371,26 +471,42 @@ export default function DashboardPage() {
                         ))}
                       </Pie>
                       <Tooltip
-                        contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                        labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                        contentStyle={tooltipStyle}
                         formatter={(value) => [`${value} trades`, ""]}
                       />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="space-y-1.5 mt-2">
                     {outcomeData.map((d) => {
-                      const total = outcomeData.reduce((sum, x) => sum + x.value, 0);
-                      const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : "0.0";
+                      const total = outcomeData.reduce(
+                        (sum, x) => sum + x.value,
+                        0
+                      );
+                      const pct =
+                        total > 0
+                          ? ((d.value / total) * 100).toFixed(1)
+                          : "0.0";
                       return (
-                        <div key={d.name} className="flex items-center justify-between">
+                        <div
+                          key={d.name}
+                          className="flex items-center justify-between"
+                        >
                           <div className="flex items-center gap-2">
-                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }} />
-                            <span className="text-xs text-slate-300">{d.name}</span>
+                            <div
+                              className="w-2.5 h-2.5 rounded-full"
+                              style={{ backgroundColor: d.color }}
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              {d.name}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-white">{d.value}</span>
-                            <span className="text-xs text-slate-500">{pct}%</span>
+                            <span className="text-xs font-medium text-foreground">
+                              {d.value}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {pct}%
+                            </span>
                           </div>
                         </div>
                       );
@@ -402,36 +518,60 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        {/* Bottom Row: Symbol Win Rate + Recent Trades */}
-        <div className="grid grid-cols-3 gap-6">
+        {/* Bottom Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Symbol Win Rates */}
-          <Card className="bg-[#111827] border-[#1e293b] col-span-2">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Symbol Win Rates</h3>
-              </div>
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Symbol Win Rates</CardTitle>
+            </CardHeader>
+            <CardContent>
               {symbolWinRateData.length === 0 ? (
-                <div className="flex items-center justify-center h-48 text-slate-400">
+                <div className="flex items-center justify-center h-48 text-muted-foreground">
                   No closed trades yet
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={220} minHeight={200}>
+                <ResponsiveContainer
+                  width="100%"
+                  height={220}
+                  minHeight={200}
+                >
                   <BarChart data={symbolWinRateData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="symbol" stroke="#64748b" fontSize={11} />
-                    <YAxis stroke="#64748b" fontSize={11} domain={[0, 100]} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="var(--border)"
+                    />
+                    <XAxis
+                      dataKey="symbol"
+                      stroke="var(--muted-foreground)"
+                      fontSize={11}
+                    />
+                    <YAxis
+                      stroke="var(--muted-foreground)"
+                      fontSize={11}
+                      domain={[0, 100]}
+                    />
                     <Tooltip
-                      contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                      labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                      contentStyle={tooltipStyle}
                       formatter={(value, name) => {
                         if (name === "winRate") return [`${value}%`, "Win Rate"];
                         return [value, "Trades"];
                       }}
                     />
-                    <Bar dataKey="winRate" name="winRate" radius={[4, 4, 0, 0]}>
+                    <Bar
+                      dataKey="winRate"
+                      name="winRate"
+                      radius={[4, 4, 0, 0]}
+                    >
                       {symbolWinRateData.map((entry, i) => (
-                        <Cell key={i} fill={entry.winRate >= 50 ? "#10b981" : "#ef4444"} />
+                        <Cell
+                          key={i}
+                          fill={
+                            entry.winRate >= 50
+                              ? "var(--chart-1)"
+                              : "var(--chart-4)"
+                          }
+                        />
                       ))}
                     </Bar>
                   </BarChart>
@@ -441,50 +581,68 @@ export default function DashboardPage() {
           </Card>
 
           {/* Recent Trades */}
-          <Card className="bg-[#111827] border-[#1e293b]">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Recent Trades</h3>
-              </div>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Recent Trades</CardTitle>
+            </CardHeader>
+            <CardContent>
               {recentSignals.length === 0 ? (
-                <div className="flex items-center justify-center h-48 text-slate-400">
+                <div className="flex items-center justify-center h-48 text-muted-foreground">
                   No recent trades
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {recentSignals.map((signal) => {
-                    const isWin = ["TP1", "TP2", "TP3", "TP4", "WIN"].includes(signal.status);
+                    const isWin = [
+                      "TP1",
+                      "TP2",
+                      "TP3",
+                      "TP4",
+                      "WIN",
+                    ].includes(signal.status);
                     const rr = calculateRR(signal);
                     return (
                       <div
                         key={signal.id}
-                        className="flex items-center justify-between py-2 border-b border-[#1e293b]/50 last:border-0"
+                        className="flex items-center justify-between py-2 border-b border-border/50 last:border-0"
                       >
                         <div className="flex items-center gap-2">
                           {isWin ? (
-                            <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+                            <ArrowUpRight className="w-4 h-4 text-chart-1" />
                           ) : (
-                            <ArrowDownRight className="w-4 h-4 text-red-400" />
+                            <ArrowDownRight className="w-4 h-4 text-chart-4" />
                           )}
                           <div>
-                            <p className="text-sm font-medium text-white">{signal.symbol}</p>
-                            <p className="text-xs text-slate-500">
-                              {signal.direction} | Q: {signal.quality_score.toFixed(0)}
+                            <p className="text-sm font-medium text-foreground">
+                              {signal.symbol}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {signal.direction} | Q:{" "}
+                              {signal.quality_score.toFixed(0)}
                             </p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className={`text-sm font-bold ${rr > 0 ? "text-emerald-400" : rr < 0 ? "text-red-400" : "text-amber-400"}`}>
-                            {rr > 0 ? "+" : ""}{rr.toFixed(1)}R
+                          <p
+                            className={`text-sm font-bold ${
+                              rr > 0
+                                ? "text-chart-1"
+                                : rr < 0
+                                ? "text-chart-4"
+                                : "text-chart-3"
+                            }`}
+                          >
+                            {rr > 0 ? "+" : ""}
+                            {rr.toFixed(1)}R
                           </p>
                           <Badge
                             variant="outline"
                             className={`text-[10px] ${
                               isWin
-                                ? "border-emerald-500/30 text-emerald-400"
+                                ? "border-emerald-500/30 text-emerald-500 dark:text-emerald-400"
                                 : signal.status === "BREAKEVEN"
-                                ? "border-amber-500/30 text-amber-400"
-                                : "border-red-500/30 text-red-400"
+                                ? "border-amber-500/30 text-amber-500 dark:text-amber-400"
+                                : "border-red-500/30 text-red-500 dark:text-red-400"
                             }`}
                           >
                             {signal.status}

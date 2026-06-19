@@ -182,6 +182,8 @@ class LiveTrade(BaseModel):
     sl: float
     tp1: float
     tp2: float
+    tp3: Optional[float] = None
+    tp4: Optional[float] = None
     rr_ratio: str
     quality_score: float
     status: str
@@ -381,11 +383,10 @@ async def get_dashboard_stats():
     open_signals = len([s for s in signals if s.get('status') in open_statuses])
     closed_signals = len([s for s in signals if s.get('status') in closed_statuses_list])
 
-    # Win rate from all non-open signals (partial + fully closed)
-    # Count TP1, TP2, TP3, TP4, WIN as wins, SL as losses, BREAKEVEN/EXPIRED as neutral
-    non_open = [s for s in signals if s.get('status') not in ('OPEN',)]
-    wins = len([s for s in non_open if s.get('status') in ('TP1', 'TP2', 'TP3', 'TP4', 'WIN')])
-    losses = len([s for s in non_open if s.get('status') == 'SL'])
+    # Win rate from fully closed signals only (excludes open partials TP1/TP2/TP3)
+    closed = [s for s in signals if s.get('status') in closed_statuses_list]
+    wins = len([s for s in closed if s.get('status') in ('TP4', 'WIN')])
+    losses = len([s for s in closed if s.get('status') == 'SL'])
     win_rate = round(wins / (wins + losses) * 100, 2) if (wins + losses) > 0 else 0.0
 
     # Average quality score
@@ -431,7 +432,7 @@ async def get_dashboard_stats():
             return round(rr1 * 0.40 + rr2 * 0.30 + rr3 * 0.20 + rr_max * 0.10, 2)
         return s.get('max_rr_hit', 0) or 0.0
 
-    total_rr = round(sum(calc_signal_rr(s) for s in signals if s.get('status') != 'OPEN'), 2)
+    total_rr = round(sum(calc_signal_rr(s) for s in signals if s.get('status') in closed_statuses_list), 2)
 
     return DashboardStats(
         total_signals=total_signals,
@@ -465,6 +466,8 @@ async def get_live_trades():
             sl=sig.get('sl', 0),
             tp1=sig.get('tp1', 0),
             tp2=sig.get('tp2', 0),
+            tp3=sig.get('tp3'),
+            tp4=sig.get('tp4'),
             rr_ratio=f"1 : {sig.get('rr1', 0)}",
             quality_score=sig.get('quality_score', 0),
             status=sig.get('status', 'OPEN'),
@@ -616,7 +619,7 @@ async def get_impact_analysis():
                         event_time = event_time.replace(tzinfo=timezone.utc)
                     if event_time > forty_eight_hours:
                         continue
-                except:
+                except (ValueError, TypeError, KeyError):
                     pass
 
                 impact = analyze_macro_event_impact(event, direction)

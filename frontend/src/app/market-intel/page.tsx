@@ -97,7 +97,7 @@ const impactConfig = {
   LOW: {
     label: "Low",
     bar: "bg-slate-500",
-    text: "text-slate-400",
+    text: "text-muted-foreground",
     bg: "bg-slate-500/10",
     border: "border-slate-500/30",
     glow: "",
@@ -112,7 +112,7 @@ function ImpactBars({ impact }: { impact: string }) {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className={`w-[3px] h-3 rounded-sm ${i < count ? cfg.bar : "bg-slate-700"}`}
+          className={`w-[3px] h-3 rounded-sm ${i < count ? cfg.bar : "bg-muted"}`}
         />
       ))}
     </div>
@@ -236,8 +236,24 @@ export default function MarketIntelPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-slate-400">Loading market intel...</div>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-40 bg-muted rounded" />
+          <div className="grid grid-cols-3 gap-6">
+            <div className="col-span-2 bg-card border border-border rounded-xl p-5 space-y-4">
+              <div className="h-4 w-36 bg-muted rounded" />
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="flex items-center gap-4">
+                  <div className="h-4 w-20 bg-muted rounded" />
+                  <div className="h-4 w-32 bg-muted rounded" />
+                  <div className="h-4 w-16 bg-muted rounded" />
+                </div>
+              ))}
+            </div>
+            <div className="bg-card border border-border rounded-xl p-5 space-y-4">
+              <div className="h-4 w-28 bg-muted rounded" />
+              <div className="h-32 bg-muted/50 rounded" />
+            </div>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -263,21 +279,21 @@ export default function MarketIntelPage() {
           <div className="flex items-center gap-3">
             <Globe className="w-5 h-5 text-emerald-400" />
             <div>
-              <h1 className="text-lg font-semibold text-white">Market Intel</h1>
-              <p className="text-xs text-slate-500">
+              <h1 className="text-lg font-semibold text-foreground">Market Intel</h1>
+              <p className="text-xs text-muted-foreground">
                 {Intl.DateTimeFormat().resolvedOptions().timeZone} · Next 14 days
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {lastUpdated && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-muted-foreground">
                 {lastUpdated.toLocaleTimeString()}
               </span>
             )}
             <button
               onClick={() => window.location.reload()}
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -291,7 +307,7 @@ export default function MarketIntelPage() {
           <div className="relative bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 rounded-lg p-3">
             <button
               onClick={() => setDismissedAlert(uniqueAlerts[0].event_id)}
-              className="absolute top-2 right-2 text-slate-500 hover:text-slate-300"
+              className="absolute top-2 right-2 text-muted-foreground hover:text-foreground/80"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -303,16 +319,16 @@ export default function MarketIntelPage() {
                 <h3 className="text-sm font-medium text-amber-400">
                   Events affecting your {uniqueAlerts[0].affected_symbols.length} open positions
                 </h3>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   {uniqueAlerts.slice(0, 2).map((a, i) => (
                     <span key={a.event_id}>
                       {i > 0 && " · "}
-                      <span className="text-slate-300">{a.event_title}</span>
-                      <span className="text-slate-500"> ({a.risk_adjustment})</span>
+                      <span className="text-foreground/80">{a.event_title}</span>
+                      <span className="text-muted-foreground"> ({a.risk_adjustment})</span>
                     </span>
                   ))}
                   {uniqueAlerts.length > 2 && (
-                    <span className="text-slate-500">
+                    <span className="text-muted-foreground">
                       {" "}+ {uniqueAlerts.length - 2} more
                     </span>
                   )}
@@ -326,8 +342,8 @@ export default function MarketIntelPage() {
             IMPACT FILTER CHIPS
            ═══════════════════════════════════════════════════════════════ */}
         <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-slate-500" />
-          <span className="text-xs text-slate-500 mr-1">Impact:</span>
+          <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground mr-1">Impact:</span>
           {(["HIGH", "MEDIUM", "LOW"] as const).map((impact) => {
             const cfg = impactConfig[impact];
             const active = selectedImpacts.has(impact);
@@ -338,7 +354,7 @@ export default function MarketIntelPage() {
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
                   active
                     ? `${cfg.bg} ${cfg.text} border ${cfg.border}`
-                    : "bg-slate-800 text-slate-600 border border-slate-700"
+                    : "bg-muted text-muted-foreground/70 border border-border"
                 }`}
               >
                 <ImpactBars impact={impact} />
@@ -346,7 +362,7 @@ export default function MarketIntelPage() {
               </button>
             );
           })}
-          <span className="text-xs text-slate-600 ml-2">
+          <span className="text-xs text-muted-foreground/70 ml-2">
             {filteredCalendar.length} events
           </span>
         </div>
@@ -357,18 +373,18 @@ export default function MarketIntelPage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           {/* LEFT COLUMN: Economic Calendar (2/3 width) */}
           <div className="xl:col-span-2 space-y-4">
-            <Card className="bg-[#141824] border-[#1e293b] overflow-hidden">
-              <CardHeader className="border-b border-[#1e293b] bg-[#111318] py-3">
+            <Card className="bg-card border-border overflow-hidden">
+              <CardHeader className="border-b border-border bg-card py-3">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-emerald-400" />
-                  <CardTitle className="text-sm font-semibold text-white">
+                  <CardTitle className="text-sm font-semibold text-foreground">
                     Economic Calendar
                   </CardTitle>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
                 {/* Table Header */}
-                <div className="grid grid-cols-[80px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2 bg-[#0d1117] border-b border-[#1e293b] text-[10px] text-slate-500 uppercase tracking-wider font-medium">
+                <div className="grid grid-cols-[80px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2 bg-muted border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
                   <div>Time</div>
                   <div>Curr</div>
                   <div>Event</div>
@@ -381,7 +397,7 @@ export default function MarketIntelPage() {
                 {/* Table Body */}
                 <div className="max-h-[480px] overflow-y-auto">
                   {Object.entries(calendarByDate).length === 0 ? (
-                    <div className="p-8 text-center text-slate-400 text-sm">
+                    <div className="p-8 text-center text-muted-foreground text-sm">
                       No events match filters
                     </div>
                   ) : (
@@ -394,18 +410,18 @@ export default function MarketIntelPage() {
                           {/* Date Header */}
                           <button
                             onClick={() => toggleDate(date)}
-                            className={`w-full flex items-center gap-2 px-4 py-2 border-b border-[#1e293b] hover:bg-[#1a1f2e] transition-colors ${
-                              isToday ? "bg-[#1e2533]/50" : "bg-[#111318]"
+                            className={`w-full flex items-center gap-2 px-4 py-2 border-b border-border hover:bg-muted transition-colors ${
+                              isToday ? "bg-muted/50" : "bg-card"
                             }`}
                           >
                             {isExpanded ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                             ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
                             )}
                             <span
                               className={`text-xs font-semibold ${
-                                isToday ? "text-white" : "text-slate-300"
+                                isToday ? "text-foreground" : "text-foreground/80"
                               }`}
                             >
                               {formatDate(date)}
@@ -415,7 +431,7 @@ export default function MarketIntelPage() {
                                 TODAY
                               </span>
                             )}
-                            <span className="text-[11px] text-slate-600">
+                            <span className="text-[11px] text-muted-foreground/70">
                               {events.length}
                             </span>
                           </button>
@@ -431,7 +447,7 @@ export default function MarketIntelPage() {
                               return (
                                 <div
                                   key={event.id}
-                                  className={`grid grid-cols-[80px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2.5 border-b border-[#1e293b]/30 hover:bg-[#1a1f2e]/30 transition-colors items-center ${
+                                  className={`grid grid-cols-[80px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2.5 border-b border-border/30 hover:bg-muted/30 transition-colors items-center ${
                                     event.impact === "HIGH"
                                       ? "bg-rose-500/[0.03]"
                                       : ""
@@ -445,8 +461,8 @@ export default function MarketIntelPage() {
                                     <span
                                       className={`text-[11px] tabular-nums ${
                                         event.impact === "HIGH"
-                                          ? "text-white font-medium"
-                                          : "text-slate-400"
+                                          ? "text-foreground font-medium"
+                                          : "text-muted-foreground"
                                       }`}
                                     >
                                       {formatTime(event.timestamp)}
@@ -460,7 +476,7 @@ export default function MarketIntelPage() {
                                         ? "text-blue-400"
                                         : event.currency === "EUR"
                                         ? "text-indigo-400"
-                                        : "text-slate-400"
+                                        : "text-muted-foreground"
                                     }`}
                                   >
                                     {event.currency}
@@ -471,8 +487,8 @@ export default function MarketIntelPage() {
                                     <span
                                       className={`text-xs truncate ${
                                         event.impact === "HIGH"
-                                          ? "text-white font-medium"
-                                          : "text-slate-200"
+                                          ? "text-foreground font-medium"
+                                          : "text-foreground/90"
                                       }`}
                                     >
                                       {event.title}
@@ -494,7 +510,7 @@ export default function MarketIntelPage() {
                                   <div className="text-right">
                                     <span
                                       className={`text-[11px] font-mono tabular-nums ${
-                                        event.actual ? "text-white" : "text-slate-600"
+                                        event.actual ? "text-foreground" : "text-muted-foreground/70"
                                       }`}
                                     >
                                       {event.actual || "—"}
@@ -503,14 +519,14 @@ export default function MarketIntelPage() {
 
                                   {/* Forecast */}
                                   <div className="text-right">
-                                    <span className="text-[11px] font-mono tabular-nums text-slate-500">
+                                    <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
                                       {event.forecast || "—"}
                                     </span>
                                   </div>
 
                                   {/* Previous */}
                                   <div className="text-right">
-                                    <span className="text-[11px] font-mono tabular-nums text-slate-600">
+                                    <span className="text-[11px] font-mono tabular-nums text-muted-foreground/70">
                                       {event.previous || "—"}
                                     </span>
                                   </div>
@@ -526,12 +542,12 @@ export default function MarketIntelPage() {
             </Card>
 
             {/* Bottom: Token Events */}
-            <Card className="bg-[#141824] border-[#1e293b]">
-              <CardHeader className="border-b border-[#1e293b] bg-[#111318] py-3">
+            <Card className="bg-card border-border">
+              <CardHeader className="border-b border-border bg-card py-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-purple-400" />
-                    <CardTitle className="text-sm font-semibold text-white">
+                    <CardTitle className="text-sm font-semibold text-foreground">
                       Token Events
                     </CardTitle>
                   </div>
@@ -543,9 +559,9 @@ export default function MarketIntelPage() {
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-[#1e293b]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-muted">
                   {tokenEvents.length === 0 ? (
-                    <div className="col-span-2 p-6 text-center text-slate-400 text-sm">
+                    <div className="col-span-2 p-6 text-center text-muted-foreground text-sm">
                       No upcoming token events
                     </div>
                   ) : (
@@ -555,20 +571,20 @@ export default function MarketIntelPage() {
                       return (
                         <div
                           key={event.id}
-                          className={`flex items-center gap-3 p-3 bg-[#141824] hover:bg-[#1a1f2e] transition-colors ${
+                          className={`flex items-center gap-3 p-3 bg-card hover:bg-muted transition-colors ${
                             event.impact === "HIGH" ? "border-l-2 border-l-rose-500" : ""
                           }`}
                         >
                           {/* Token icon placeholder */}
-                          <div className="w-8 h-8 rounded-lg bg-slate-700/50 flex items-center justify-center flex-shrink-0">
-                            <span className="text-[10px] font-bold text-white">
+                          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                            <span className="text-[10px] font-bold text-foreground">
                               {event.token.slice(0, 3)}
                             </span>
                           </div>
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold text-white">
+                              <span className="text-xs font-semibold text-foreground">
                                 {event.token}
                               </span>
                               <span
@@ -577,10 +593,10 @@ export default function MarketIntelPage() {
                                 {event.impact}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-400 truncate">
+                            <p className="text-[11px] text-muted-foreground truncate">
                               {event.description}
                             </p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
                               {formatShortDate(event.timestamp)} · {event.event_type}
                             </p>
                           </div>
@@ -595,12 +611,12 @@ export default function MarketIntelPage() {
 
           {/* RIGHT COLUMN: News Sidebar (1/3 width) */}
           <div className="space-y-4">
-            <Card className="bg-[#141824] border-[#1e293b] h-full max-h-[680px]">
-              <CardHeader className="border-b border-[#1e293b] bg-[#111318] py-3">
+            <Card className="bg-card border-border h-full max-h-[680px]">
+              <CardHeader className="border-b border-border bg-card py-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Newspaper className="w-4 h-4 text-blue-400" />
-                    <CardTitle className="text-sm font-semibold text-white">
+                    <CardTitle className="text-sm font-semibold text-foreground">
                       Latest News
                     </CardTitle>
                   </div>
@@ -609,8 +625,8 @@ export default function MarketIntelPage() {
                       onClick={() => setNewsFilter("all")}
                       className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
                         newsFilter === "all"
-                          ? "bg-slate-700 text-white"
-                          : "text-slate-500 hover:text-slate-300"
+                          ? "bg-muted text-foreground"
+                          : "text-muted-foreground hover:text-foreground/80"
                       }`}
                     >
                       All
@@ -620,7 +636,7 @@ export default function MarketIntelPage() {
                       className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
                         newsFilter === "high-impact"
                           ? "bg-amber-500/20 text-amber-400"
-                          : "text-slate-500 hover:text-slate-300"
+                          : "text-muted-foreground hover:text-foreground/80"
                       }`}
                     >
                       Impact
@@ -631,18 +647,18 @@ export default function MarketIntelPage() {
               <CardContent className="p-0">
                 <div className="max-h-[620px] overflow-y-auto">
                   {filteredNews.length === 0 ? (
-                    <div className="p-6 text-center text-slate-400 text-sm">
+                    <div className="p-6 text-center text-muted-foreground text-sm">
                       No news available
                     </div>
                   ) : (
-                    <div className="divide-y divide-[#1e293b]/40">
+                    <div className="divide-y divide-border/50">
                       {filteredNews.map((item) => (
                         <div
                           key={item.id}
-                          className="p-3 hover:bg-[#1a1f2e]/30 transition-colors"
+                          className="p-3 hover:bg-muted/30 transition-colors"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <h4 className="text-xs text-slate-200 leading-snug line-clamp-2 flex-1">
+                            <h4 className="text-xs text-foreground/90 leading-snug line-clamp-2 flex-1">
                               {item.title}
                             </h4>
                             {item.sentiment && (
@@ -652,7 +668,7 @@ export default function MarketIntelPage() {
                                     ? "text-emerald-400"
                                     : item.sentiment === "negative"
                                     ? "text-rose-400"
-                                    : "text-slate-400"
+                                    : "text-muted-foreground"
                                 }`}
                               >
                                 {item.sentiment === "positive"
@@ -664,11 +680,11 @@ export default function MarketIntelPage() {
                             )}
                           </div>
                           <div className="flex items-center gap-2 mt-1.5">
-                            <span className="text-[10px] text-slate-500 font-medium uppercase">
+                            <span className="text-[10px] text-muted-foreground font-medium uppercase">
                               {item.source}
                             </span>
-                            <span className="text-[10px] text-slate-600">·</span>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-[10px] text-muted-foreground/70">·</span>
+                            <span className="text-[10px] text-muted-foreground">
                               {formatTimeAgo(item.published_at)}
                             </span>
                           </div>
@@ -677,7 +693,7 @@ export default function MarketIntelPage() {
                               {item.currencies.slice(0, 3).map((c) => (
                                 <span
                                   key={c}
-                                  className="text-[9px] text-slate-400 bg-slate-800 px-1 py-0.5 rounded"
+                                  className="text-[9px] text-muted-foreground bg-muted px-1 py-0.5 rounded"
                                 >
                                   {c}
                                 </span>
