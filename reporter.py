@@ -36,8 +36,8 @@ def calc_signal_rr(s: dict) -> float:
     status = s.get('status', '')
     rr1 = s.get('rr1', 1.5)
     rr2 = s.get('rr2', 2.0)
-    rr3 = s.get('rr3', 2.5)
-    rr_max = s.get('rr_max', 3.0)
+    rr3 = s.get('rr3', 3.0)
+    rr_max = s.get('rr_max', 4.0)
 
     if status == 'SL':
         return -1.0
@@ -235,7 +235,7 @@ class PerformanceReporter:
             s for s in signals
             if (closed_dt := _parse_closed_at(s)) is not None and
             closed_dt >= cutoff and
-            s.get('status') not in ('OPEN',)
+            s.get('status') in ('TP4', 'SL', 'BREAKEVEN', 'EXPIRED', 'WIN')
         ]
 
         if not closed:

@@ -12,7 +12,7 @@ import asyncio
 import threading
 import requests
 import logging
-from datetime import datetime, timedelta, timezone, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +509,7 @@ class SignalTracker:
             elif tp == 'tp2':
                 total_rr += sig.get('rr2', 2.0) * 0.30
             elif tp == 'tp3':
-                total_rr += sig.get('rr3', 2.5) * 0.20
+                total_rr += sig.get('rr3', 3.0) * 0.20
             elif tp == 'tp4':
                 total_rr += sig['rr_max'] * 0.10
 
@@ -765,8 +765,9 @@ class SignalTracker:
         if not recent:
             return {'wins': 0, 'total': 0, 'win_rate': 0.5}
 
-        wins = sum(1 for s in recent if s['outcome'] in ('WIN', 'TP4'))
-        total = len(recent)
+        wins = sum(1 for s in recent if s['status'] in ('TP1', 'TP2', 'TP3', 'TP4', 'WIN'))
+        losses = sum(1 for s in recent if s['status'] == 'SL')
+        total = wins + losses
         return {
             'wins': wins,
             'total': total,

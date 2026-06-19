@@ -182,6 +182,8 @@ class LiveTrade(BaseModel):
     sl: float
     tp1: float
     tp2: float
+    tp3: Optional[float] = None
+    tp4: Optional[float] = None
     rr_ratio: str
     quality_score: float
     status: str
@@ -465,6 +467,8 @@ async def get_live_trades():
             sl=sig.get('sl', 0),
             tp1=sig.get('tp1', 0),
             tp2=sig.get('tp2', 0),
+            tp3=sig.get('tp3'),
+            tp4=sig.get('tp4'),
             rr_ratio=f"1 : {sig.get('rr1', 0)}",
             quality_score=sig.get('quality_score', 0),
             status=sig.get('status', 'OPEN'),
@@ -616,7 +620,7 @@ async def get_impact_analysis():
                         event_time = event_time.replace(tzinfo=timezone.utc)
                     if event_time > forty_eight_hours:
                         continue
-                except:
+                except (ValueError, TypeError, KeyError):
                     pass
 
                 impact = analyze_macro_event_impact(event, direction)
