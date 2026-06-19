@@ -69,23 +69,31 @@ export default function TradeHistoryPage() {
   const [filterStrength, setFilterStrength] = useState("ALL");
 
   useEffect(() => {
+    let isMounted = true;
+
     async function fetchData() {
       try {
         const data = await getAllSignals();
-        // Filter out OPEN signals for trade history (same as dashboard non_open)
-        const nonOpen = data.filter((s) => s.status !== "OPEN");
-        setSignals(nonOpen);
+        if (!isMounted) return;
+        // Filter to only fully closed signals (TP1/TP2/TP3 are still partially open)
+        const closedStatuses = ["TP4", "SL", "BREAKEVEN", "EXPIRED", "WIN"];
+        const closed = data.filter((s) => closedStatuses.includes(s.status));
+        setSignals(closed);
       } catch (err) {
+        if (!isMounted) return;
         setError(err instanceof Error ? err.message : "Failed to fetch trade history");
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
     fetchData();
 
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   // Apply filters

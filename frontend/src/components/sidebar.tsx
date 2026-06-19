@@ -9,6 +9,7 @@ import {
   Clock,
   BarChart3,
   FlaskConical,
+  Newspaper,
   Settings,
   TrendingUp,
   Moon,
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/trade-history", label: "Trade History", icon: Clock },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/backtest", label: "Backtest", icon: FlaskConical },
+  { href: "/market-intel", label: "Market Intel", icon: Newspaper },
 ];
 
 export function Sidebar({ onCollapseChange }: { onCollapseChange?: (collapsed: boolean) => void } = {}) {

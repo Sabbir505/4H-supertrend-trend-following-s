@@ -7,13 +7,29 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import logging
+import asyncio
 
 app = FastAPI(title="TradeEdge API", version="1.0.0")
+
+# Import market intel module
+try:
+    from market_intel import (
+        market_intel_fetcher,
+        analyze_event_impact_for_position,
+        analyze_macro_event_impact,
+    )
+    MARKET_INTEL_AVAILABLE = True
+except ImportError:
+    MARKET_INTEL_AVAILABLE = False
+    logging.warning("Market intel module not available")
+
+logger = logging.getLogger(__name__)
 
 # Enable CORS for Next.js frontend
 app.add_middleware(
@@ -51,8 +67,10 @@ def load_signals_from_data_dir() -> list:
                         data = json.load(f)
                         if isinstance(data, list):
                             signals.extend(data)
-                except (json.JSONDecodeError, Exception):
-                    continue
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse {json_file}: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to read {json_file}: {e}")
 
     return signals
 
@@ -172,22 +190,68 @@ class LiveTrade(BaseModel):
     tp1_progress: Optional[float] = None
 
 
+# ─── Market Intel Data Models ─────────────────────────────────────────────────
+
+class EconomicEvent(BaseModel):
+    id: str
+    title: str
+    currency: str
+    impact: str  # LOW, MEDIUM, HIGH
+    event_type: str  # CPI, PPI, FOMC, GDP, etc.
+    timestamp: str
+    actual: Optional[str] = None
+    forecast: Optional[str] = None
+    previous: Optional[str] = None
+    sentiment: Optional[str] = None
+
+
+class CryptoNews(BaseModel):
+    id: str
+    title: str
+    source: str
+    published_at: str
+    sentiment: Optional[str] = None  # positive, negative, neutral
+    currencies: List[str] = []
+    url: Optional[str] = None
+    impact_score: Optional[int] = None
+
+
+class TokenEvent(BaseModel):
+    id: str
+    token: str
+    event_type: str
+    timestamp: str
+    description: str
+    impact: str  # LOW, MEDIUM, HIGH
+    amount: Optional[float] = None
+    url: Optional[str] = None
+
+
+class ImpactCorrelation(BaseModel):
+    event_id: str
+    event_title: str
+    affected_symbols: List[str]
+    position_impact: str  # POSITIVE, NEGATIVE, NEUTRAL
+    risk_adjustment: str  # INCREASE_SL, MONITOR, HOLD, CLOSE_POSITION
+    reason: str
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_signals() -> list:
-    """Load signals from data directory or fallback to signals.json"""
-    # Try data directory first
-    signals = load_signals_from_data_dir()
-    if signals:
-        return signals
-    # Fallback to legacy signals.json
-    if not SIGNALS_FILE.exists():
-        return []
-    try:
-        with open(SIGNALS_FILE, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, Exception):
-        return []
+    """Load signals from signals.json (source of truth), fallback to data directory for historical"""
+    # Primary source: signals.json (current active signals)
+    if SIGNALS_FILE.exists():
+        try:
+            with open(SIGNALS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse signals.json: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to read signals.json: {e}")
+
+    # Fallback: data directory (for historical data if signals.json missing)
+    return load_signals_from_data_dir()
 
 
 def load_backtest_results() -> list:
@@ -197,7 +261,11 @@ def load_backtest_results() -> list:
     try:
         with open(BACKTEST_FILE, 'r') as f:
             return json.load(f)
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse backtest_results.json: {e}")
+        return []
+    except Exception as e:
+        logger.warning(f"Failed to read backtest_results.json: {e}")
         return []
 
 
@@ -205,7 +273,7 @@ def format_time_ago(fired_at_str: str) -> str:
     """Format time since signal was fired"""
     try:
         fired = datetime.fromisoformat(fired_at_str.replace('Z', '+00:00'))
-        delta = datetime.utcnow() - fired.replace(tzinfo=None)
+        delta = datetime.now(timezone.utc) - fired
         minutes = int(delta.total_seconds() / 60)
         if minutes < 60:
             return f"{minutes}m"
@@ -335,8 +403,8 @@ async def get_dashboard_stats():
         status = s.get('status', '')
         rr1 = s.get('rr1', 1.5)
         rr2 = s.get('rr2', 2.0)
-        rr3 = s.get('rr3', 2.5)
-        rr_max = s.get('rr_max', 3.0)
+        rr3 = s.get('rr3', 3.0)
+        rr_max = s.get('rr_max', 4.0)
         if status == 'SL':
             return -1.0
         if status == 'EXPIRED':
@@ -450,6 +518,156 @@ async def get_analytics_summary():
         'symbol_performance': monthly,
         'total_signals': len(signals)
     }
+
+
+# ─── Market Intel Endpoints ────────────────────────────────────────────────────
+
+@app.get("/api/market/calendar", response_model=List[EconomicEvent])
+async def get_economic_calendar():
+    """Get economic calendar events for the next 14 days"""
+    if not MARKET_INTEL_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Market intel service unavailable")
+
+    events = await market_intel_fetcher.fetch_economic_calendar()
+    return events
+
+
+@app.get("/api/market/news", response_model=List[CryptoNews])
+async def get_crypto_news():
+    """Get latest crypto news from CryptoPanic"""
+    if not MARKET_INTEL_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Market intel service unavailable")
+
+    news = await market_intel_fetcher.fetch_crypto_news()
+    return news
+
+
+@app.get("/api/market/events", response_model=List[TokenEvent])
+async def get_token_events():
+    """Get upcoming token-specific events from CoinGecko"""
+    if not MARKET_INTEL_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Market intel service unavailable")
+
+    events = await market_intel_fetcher.fetch_token_events()
+    return events
+
+
+@app.get("/api/market/impact", response_model=List[ImpactCorrelation])
+async def get_impact_analysis():
+    """
+    Analyze impact of upcoming events on open positions.
+    Correlates economic events, token events, and news with open trades.
+    Groups affected symbols together for cleaner output.
+    """
+    if not MARKET_INTEL_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Market intel service unavailable")
+
+    signals = load_signals()
+    open_statuses = ["OPEN", "TP1", "TP2", "TP3"]
+    open_signals = [s for s in signals if s.get("status") in open_statuses]
+
+    if not open_signals:
+        return []
+
+    # Fetch market intel data
+    calendar, token_events, news = await asyncio.gather(
+        market_intel_fetcher.fetch_economic_calendar(),
+        market_intel_fetcher.fetch_token_events(),
+        market_intel_fetcher.fetch_crypto_news(),
+    )
+
+    # Track events by ID to group affected symbols
+    event_impacts: Dict[str, dict] = {}
+
+    # Only consider events in next 48 hours for impact alerts
+    now = datetime.now(timezone.utc)
+    forty_eight_hours = now + timedelta(hours=48)
+
+    for sig in open_signals:
+        symbol = sig.get("symbol", "")
+        direction = sig.get("direction", "LONG")
+        base_symbol = symbol.replace("USDT", "").replace("USD", "").replace("USDC", "")
+
+        # Check token events for symbol match
+        for event in token_events:
+            if event.get("token", "") == base_symbol:
+                impact = analyze_event_impact_for_position(event, symbol, direction)
+                if impact["position_impact"] != "NEUTRAL":
+                    event_id = event["id"]
+                    if event_id not in event_impacts:
+                        event_impacts[event_id] = {
+                            "event_id": event_id,
+                            "event_title": event["description"],
+                            "affected_symbols": [],
+                            "position_impact": impact["position_impact"],
+                            "risk_adjustment": impact["risk_adjustment"],
+                            "reason": impact["reason"],
+                        }
+                    if symbol not in event_impacts[event_id]["affected_symbols"]:
+                        event_impacts[event_id]["affected_symbols"].append(symbol)
+
+        # Check high-impact macro events (affects all USD pairs) - only next 48 hours
+        for event in calendar:
+            if event["impact"] == "HIGH":
+                # Parse event timestamp and check if within 48 hours
+                try:
+                    event_time = datetime.fromisoformat(event["timestamp"].replace('Z', '+00:00'))
+                    if event_time.tzinfo is None:
+                        event_time = event_time.replace(tzinfo=timezone.utc)
+                    if event_time > forty_eight_hours:
+                        continue
+                except:
+                    pass
+
+                impact = analyze_macro_event_impact(event, direction)
+                if impact["risk_adjustment"] != "HOLD":
+                    event_id = event["id"]
+                    if event_id not in event_impacts:
+                        event_impacts[event_id] = {
+                            "event_id": event_id,
+                            "event_title": event["title"],
+                            "affected_symbols": [],
+                            "position_impact": impact["position_impact"],
+                            "risk_adjustment": impact["risk_adjustment"],
+                            "reason": impact["reason"],
+                        }
+                    if symbol not in event_impacts[event_id]["affected_symbols"]:
+                        event_impacts[event_id]["affected_symbols"].append(symbol)
+
+        # Check news for symbol mentions
+        for article in news[:10]:
+            if base_symbol in article.get("currencies", []):
+                sentiment = article.get("sentiment", "neutral")
+                if direction == "LONG" and sentiment == "negative":
+                    event_id = article["id"]
+                    if event_id not in event_impacts:
+                        event_impacts[event_id] = {
+                            "event_id": event_id,
+                            "event_title": article["title"],
+                            "affected_symbols": [],
+                            "position_impact": "NEGATIVE",
+                            "risk_adjustment": "MONITOR",
+                            "reason": f"Negative news may affect {base_symbol}",
+                        }
+                    if symbol not in event_impacts[event_id]["affected_symbols"]:
+                        event_impacts[event_id]["affected_symbols"].append(symbol)
+                elif direction == "SHORT" and sentiment == "positive":
+                    event_id = article["id"]
+                    if event_id not in event_impacts:
+                        event_impacts[event_id] = {
+                            "event_id": event_id,
+                            "event_title": article["title"],
+                            "affected_symbols": [],
+                            "position_impact": "NEGATIVE",
+                            "risk_adjustment": "MONITOR",
+                            "reason": f"Positive news may affect {base_symbol}",
+                        }
+                    if symbol not in event_impacts[event_id]["affected_symbols"]:
+                        event_impacts[event_id]["affected_symbols"].append(symbol)
+
+    # Convert to list and limit to top 10 most relevant
+    correlations = list(event_impacts.values())[:10]
+    return correlations
 
 
 # ─── Startup ──────────────────────────────────────────────────────────────────

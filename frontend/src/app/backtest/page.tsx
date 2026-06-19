@@ -59,7 +59,7 @@ export default function BacktestPage() {
   const totalBreakevens = results.reduce((sum, r) => sum + r.breakevens, 0);
   const totalLosses = results.reduce((sum, r) => sum + r.losses, 0);
   const totalRR = results.reduce((sum, r) => sum + r.total_rr, 0);
-  const overallWR = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : "0.0";
+  const overallWR = (totalWins + totalLosses) > 0 ? ((totalWins / (totalWins + totalLosses)) * 100).toFixed(1) : "0.0";
   const overallBE = totalTrades > 0 ? ((totalBreakevens / totalTrades) * 100).toFixed(1) : "0.0";
 
   // Symbol comparison chart data

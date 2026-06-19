@@ -7,7 +7,7 @@ Performance Reporter
 import json
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from pathlib import Path
 
@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 
 SIGNALS_FILE = "signals.json"
 DATA_DIR = Path("data/signals")
+
+
+def _parse_closed_at(s: dict):
+    """Parse closed_at string to timezone-aware datetime."""
+    raw = s.get('closed_at')
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, AttributeError):
+        return None
 
 
 def calc_signal_rr(s: dict) -> float:
@@ -110,7 +124,7 @@ class PerformanceReporter:
 
     def send_daily_report(self):
         """Sends 24H performance summary to Telegram"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         today = now.strftime('%Y-%m-%d')
 
         # Prevent duplicate daily reports
@@ -121,12 +135,13 @@ class PerformanceReporter:
         signals = self._load()
         cutoff = now - timedelta(hours=24)
 
-        # Filter to last 24H closed signals (exclude OPEN and EXPIRED from main stats)
+        # Filter to last 24H fully closed signals (exclude OPEN, TP1, TP2, TP3 - partial closes)
+        closed_statuses = ('TP4', 'SL', 'BREAKEVEN', 'EXPIRED', 'WIN')
         recent = [
             s for s in signals
-            if s.get('closed_at') and
-            datetime.fromisoformat(s['closed_at']) >= cutoff and
-            s.get('status') not in ('OPEN',)
+            if (closed_dt := _parse_closed_at(s)) is not None and
+            closed_dt >= cutoff and
+            s.get('status') in closed_statuses
         ]
 
         if not recent:
@@ -205,7 +220,7 @@ class PerformanceReporter:
 
     def send_weekly_report(self):
         """Sends 7-day performance summary"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         week_key = now.strftime('%Y-W%U')
 
         # Prevent duplicate weekly report
@@ -218,8 +233,8 @@ class PerformanceReporter:
 
         closed = [
             s for s in signals
-            if s.get('closed_at') and
-            datetime.fromisoformat(s['closed_at']) >= cutoff and
+            if (closed_dt := _parse_closed_at(s)) is not None and
+            closed_dt >= cutoff and
             s.get('status') not in ('OPEN',)
         ]
 

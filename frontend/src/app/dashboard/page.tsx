@@ -106,6 +106,44 @@ export default function DashboardPage() {
     return data;
   }, [closedSignals]);
 
+  // Compute equity curve from closed signals (cumulative RR)
+  // 4-TP incremental closing strategy (40/30/20/10)
+  const equityDataWithCumulative = useMemo(() => {
+    const sortedClosed = [...closedSignals]
+      .filter(s => s.fired_at || s.closed_at) // Filter out entries with no valid date
+      .sort(
+        (a, b) => {
+          const dateA = a.closed_at || a.fired_at;
+          const dateB = b.closed_at || b.fired_at;
+          if (!dateA || !dateB) return 0;
+          return new Date(dateA).getTime() - new Date(dateB).getTime();
+        }
+      );
+    const equityData = sortedClosed.map((s, index) => {
+      const rr = calculateRR(s);
+      const date = s.closed_at || s.fired_at;
+      const tradeDate = date ? new Date(date) : new Date();
+      return {
+        date: tradeDate.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        time: tradeDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        rr: parseFloat(rr.toFixed(2)),
+        symbol: s.symbol,
+        index: index + 1, // Trade number
+        status: s.status,
+        tradeRR: rr,
+      };
+    });
+    // Calculate cumulative RR using reduce (avoids mutating variables during render)
+    return equityData.reduce<{ result: typeof equityData; runningTotal: number }>(
+      (acc, item) => {
+        acc.runningTotal += item.tradeRR;
+        acc.result.push({ ...item, rr: parseFloat(acc.runningTotal.toFixed(2)) });
+        return acc;
+      },
+      { result: [], runningTotal: 0 }
+    ).result;
+  }, [closedSignals]);
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -126,42 +164,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Compute equity curve from closed signals (cumulative RR)
-  // Correct blended RR for 2-TP closing strategy (50/50)
-  const sortedClosed = [...closedSignals]
-    .filter(s => s.fired_at || s.closed_at) // Filter out entries with no valid date
-    .sort(
-      (a, b) => {
-        const dateA = a.closed_at || a.fired_at;
-        const dateB = b.closed_at || b.fired_at;
-        if (!dateA || !dateB) return 0;
-        return new Date(dateA).getTime() - new Date(dateB).getTime();
-      }
-    );
-  const equityData = sortedClosed.map((s, index) => {
-    const rr = calculateRR(s);
-    const date = s.closed_at || s.fired_at;
-    const tradeDate = date ? new Date(date) : new Date();
-    return {
-      date: tradeDate.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      time: tradeDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
-      rr: parseFloat(rr.toFixed(2)),
-      symbol: s.symbol,
-      index: index + 1, // Trade number
-      status: s.status,
-      tradeRR: rr,
-    };
-  });
-  // Calculate cumulative RR using reduce (avoids mutating variables during render)
-  const equityDataWithCumulative = equityData.reduce<{ result: typeof equityData; runningTotal: number }>(
-    (acc, item) => {
-      acc.runningTotal += item.tradeRR;
-      acc.result.push({ ...item, rr: parseFloat(acc.runningTotal.toFixed(2)) });
-      return acc;
-    },
-    { result: [], runningTotal: 0 }
-  ).result;
-
   // Compute symbol stats from closed signals
   const symbolStats: Record<string, { total: number; wins: number; losses: number }> = {};
   closedSignals.forEach((s) => {
@@ -181,7 +183,16 @@ export default function DashboardPage() {
 
   // Recent signals (latest 5)
   const recentSignals = [...closedSignals]
-    .sort((a, b) => new Date(b.closed_at || b.fired_at).getTime() - new Date(a.closed_at || a.fired_at).getTime())
+    .filter(s => s.closed_at || s.fired_at)
+    .sort((a, b) => {
+      const dateA = a.closed_at || a.fired_at;
+      const dateB = b.closed_at || b.fired_at;
+      if (!dateA || !dateB) return 0;
+      const timeA = new Date(dateA).getTime();
+      const timeB = new Date(dateB).getTime();
+      if (isNaN(timeA) || isNaN(timeB)) return 0;
+      return timeB - timeA;
+    })
     .slice(0, 5);
 
   // Compute total RR from closed signals (consistent with equity curve)
