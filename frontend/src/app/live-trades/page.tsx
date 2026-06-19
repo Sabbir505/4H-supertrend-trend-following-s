@@ -421,27 +421,27 @@ export default function LiveTradesPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-white">Live Trades</h1>
+              <h1 className="text-2xl font-semibold text-foreground">Live Trades</h1>
               <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-500/10 rounded-full">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-sm text-emerald-400 font-medium">Live</span>
               </div>
             </div>
-            <p className="text-sm text-slate-400 mt-1">
+            <p className="text-sm text-muted-foreground mt-1">
               Real-time monitoring of your active trading signals
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* Active Trades pill */}
-            <div className="flex items-center gap-2 px-3 py-2 bg-[#1e293b] rounded-full border border-[#1e293b]">
-              <span className="text-sm text-slate-400">Active Trades</span>
-              <span className="text-sm font-bold text-white">{activeTrades}</span>
+            <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-full border border-border">
+              <span className="text-sm text-muted-foreground">Active Trades</span>
+              <span className="text-sm font-bold text-foreground">{activeTrades}</span>
             </div>
             {/* Refresh button */}
             <button
               onClick={fetchData}
               disabled={refreshing}
-              className="flex items-center gap-2 px-3 py-2 bg-[#1e293b] border border-[#1e293b] rounded-full text-sm text-white hover:bg-[#2d3748] transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-3 py-2 bg-muted border border-border rounded-full text-sm text-foreground hover:bg-accent transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
               Refresh
@@ -451,19 +451,35 @@ export default function LiveTradesPage() {
               onClick={() => setAutoRefresh(!autoRefresh)}
               className="flex items-center gap-2"
             >
-              <span className="text-sm text-slate-400">Auto-refresh</span>
+              <span className="text-sm text-muted-foreground">Auto-refresh</span>
               <div className={`w-10 h-5 rounded-full relative cursor-pointer transition-colors ${autoRefresh ? "bg-blue-500" : "bg-slate-600"}`}>
                 <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${autoRefresh ? "right-0.5" : "left-0.5"}`} />
               </div>
             </button>
             {/* Countdown */}
-            {autoRefresh && <span className="text-sm text-slate-500">{countdown}s</span>}
+            {autoRefresh && <span className="text-sm text-muted-foreground">{countdown}s</span>}
           </div>
         </div>
 
         {loading && !trades.length ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-slate-400">Loading live trades...</div>
+          <div className="animate-pulse space-y-4 p-2">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-card border border-border rounded-xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-5 w-28 bg-muted rounded" />
+                    <div className="h-5 w-16 bg-muted rounded" />
+                  </div>
+                  <div className="h-6 w-20 bg-muted rounded" />
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="h-12 bg-muted/50 rounded" />
+                  <div className="h-12 bg-muted/50 rounded" />
+                  <div className="h-12 bg-muted/50 rounded" />
+                  <div className="h-12 bg-muted/50 rounded" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : error && !trades.length ? (
           <div className="flex items-center justify-center h-64">
@@ -474,7 +490,7 @@ export default function LiveTradesPage() {
             {/* Trades List */}
             <div className="flex-1 min-w-0">
               {trades.length === 0 ? (
-                <div className="text-center py-12 text-slate-400">
+                <div className="text-center py-12 text-muted-foreground">
                   No active trades at the moment
                 </div>
               ) : (
@@ -491,7 +507,7 @@ export default function LiveTradesPage() {
                   return (
                     <Card
                       key={trade.id}
-                      className="bg-[#111827] border-[#1e293b] hover:border-emerald-500/30 transition-colors relative overflow-hidden"
+                      className=" hover:border-emerald-500/30 transition-colors relative overflow-hidden"
                     >
                       {/* Status badge */}
                       <div className="absolute top-4 right-4 z-10">
@@ -540,14 +556,14 @@ export default function LiveTradesPage() {
                           <div className="flex items-center gap-3">
                             <div className="relative w-12 h-12 flex-shrink-0">
                               {failedIcons.has(trade.symbol) ? (
-                                <div className="w-12 h-12 rounded-full bg-[#1e293b] flex items-center justify-center text-white font-bold text-lg">
+                                <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-foreground font-bold text-lg">
                                   {trade.symbol.charAt(0)}
                                 </div>
                               ) : (
                                 <img
                                   src={trade.iconUrl}
                                   alt={trade.symbol}
-                                  className="w-12 h-12 rounded-full bg-[#1e293b] object-cover"
+                                  className="w-12 h-12 rounded-full bg-muted object-cover"
                                   onError={() => {
                                     setFailedIcons(prev => new Set(prev).add(trade.symbol));
                                   }}
@@ -555,8 +571,8 @@ export default function LiveTradesPage() {
                               )}
                             </div>
                             <div>
-                              <h3 className="text-lg font-bold text-white">{trade.symbol}</h3>
-                              <p className="text-xs text-slate-500">{trade.timeAgo} ago</p>
+                              <h3 className="text-lg font-bold text-foreground">{trade.symbol}</h3>
+                              <p className="text-xs text-muted-foreground">{trade.timeAgo} ago</p>
                             </div>
                           </div>
 
@@ -591,13 +607,13 @@ export default function LiveTradesPage() {
 
                           {/* Right: RR + Quality */}
                           <div className="text-left sm:text-right">
-                            <p className="text-xs text-slate-500">RR Levels</p>
+                            <p className="text-xs text-muted-foreground">RR Levels</p>
                             <div className="flex items-center gap-1 justify-end">
                               <span className="text-lg font-bold text-emerald-400">1:{trade.rr1}</span>
-                              <span className="text-xs text-slate-500">→</span>
+                              <span className="text-xs text-muted-foreground">→</span>
                               <span className="text-lg font-bold text-emerald-400">1:{trade.rrMax}</span>
                             </div>
-                            <p className="text-[10px] text-slate-500 mt-0.5">
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
                               TP2: 1:{trade.rr2} | TP3: 1:{trade.rr3}
                             </p>
                           </div>
@@ -605,19 +621,19 @@ export default function LiveTradesPage() {
 
                         {/* Current Price & PNL */}
                         {trade.currentPrice && (
-                          <div className="mt-3 p-3 bg-[#1e293b]/50 rounded-lg">
+                          <div className="mt-3 p-3 bg-muted/50 rounded-lg">
                             <div className="flex items-center justify-between">
                               <div>
-                                <p className="text-xs text-slate-500">Current Price</p>
-                                <p className="text-lg font-bold text-white">{formatPrice(trade.currentPrice)}</p>
+                                <p className="text-xs text-muted-foreground">Current Price</p>
+                                <p className="text-lg font-bold text-foreground">{formatPrice(trade.currentPrice)}</p>
                               </div>
                               {trade.pnl !== null && trade.pnlPercent !== null && (
                                 <div className="text-right">
-                                  <p className="text-xs text-slate-500">PNL (10x Leveraged)</p>
+                                  <p className="text-xs text-muted-foreground">PNL (10x Leveraged)</p>
                                   <p className={`text-lg font-bold ${trade.pnlPercent >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                                     {trade.pnlPercent >= 0 ? "+" : ""}{trade.pnlPercent.toFixed(2)}%
                                   </p>
-                                  <p className="text-xs text-slate-500 mt-0.5">
+                                  <p className="text-xs text-muted-foreground mt-0.5">
                                     {trade.pnl >= 0 ? "+" : ""}{trade.pnl.toFixed(2)}R
                                   </p>
                                 </div>
@@ -629,13 +645,13 @@ export default function LiveTradesPage() {
                         {/* ROW 2: Price Levels */}
                         <div className="mt-4">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-slate-500">Price Levels</span>
-                            <span className="text-xs text-slate-500">SL Risk: {slPct.toFixed(2)}%</span>
+                            <span className="text-xs text-muted-foreground">Price Levels</span>
+                            <span className="text-xs text-muted-foreground">SL Risk: {slPct.toFixed(2)}%</span>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            <div className="bg-[#1e293b]/50 rounded-lg p-2">
-                              <p className="text-[10px] text-slate-500 uppercase">Entry</p>
-                              <p className="text-sm font-bold text-white">{formatPrice(trade.entryPrice)}</p>
+                            <div className="bg-muted/50 rounded-lg p-2">
+                              <p className="text-[10px] text-muted-foreground uppercase">Entry</p>
+                              <p className="text-sm font-bold text-foreground">{formatPrice(trade.entryPrice)}</p>
                             </div>
                             <div className="bg-red-500/10 rounded-lg p-2">
                               <p className="text-[10px] text-red-400 uppercase">SL</p>
@@ -661,9 +677,9 @@ export default function LiveTradesPage() {
 
                           {/* TP Hit Progress */}
                           {trade.status !== "OPEN" && (
-                            <div className="mt-3 p-3 bg-[#1e293b]/30 rounded-lg">
+                            <div className="mt-3 p-3 bg-muted/30 rounded-lg">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs text-slate-400">
+                                <span className="text-xs text-muted-foreground">
                                   {trade.status === "SL" ? "Stop Loss Hit" : "Position Closed"}
                                 </span>
                                 <span className="text-xs font-bold text-emerald-400">
@@ -675,7 +691,7 @@ export default function LiveTradesPage() {
                                 </span>
                               </div>
                               {trade.status !== "SL" && (
-                                <div className="w-full bg-[#1e293b] rounded-full h-2">
+                                <div className="w-full bg-muted rounded-full h-2">
                                   <div
                                     className="h-2 rounded-full bg-emerald-500 transition-all duration-500"
                                     style={{
@@ -692,10 +708,10 @@ export default function LiveTradesPage() {
 
                           {/* Price Progress Toward Next TP */}
                           {trade.currentPrice && trade.status === "OPEN" && (
-                            <div className="mt-3 p-3 bg-[#1e293b]/30 rounded-lg">
+                            <div className="mt-3 p-3 bg-muted/30 rounded-lg">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs text-slate-400">Progress to TP1</span>
-                                <span className="text-xs text-slate-500">
+                                <span className="text-xs text-muted-foreground">Progress to TP1</span>
+                                <span className="text-xs text-muted-foreground">
                                   {formatPrice(trade.currentPrice)} / {formatPrice(trade.tp1Price)}
                                 </span>
                               </div>
@@ -705,7 +721,7 @@ export default function LiveTradesPage() {
                                 const currentDist = isLong ? trade.currentPrice - trade.entryPrice : trade.entryPrice - trade.currentPrice;
                                 const progress = totalDist !== 0 ? Math.max(0, Math.min(100, (currentDist / totalDist) * 100)) : 0;
                                 return (
-                                  <div className="w-full bg-[#1e293b] rounded-full h-2">
+                                  <div className="w-full bg-muted rounded-full h-2">
                                     <div
                                       className="h-2 rounded-full bg-blue-500 transition-all duration-500"
                                       style={{ width: `${progress}%` }}
@@ -718,22 +734,22 @@ export default function LiveTradesPage() {
                         </div>
 
                         {/* ROW 3: Stats */}
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mt-4 pt-4 border-t border-[#1e293b]/50 gap-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mt-4 pt-4 border-t border-border/50 gap-2">
                           <div>
-                            <p className="text-xs text-slate-500">RR Levels</p>
-                            <p className="text-sm font-bold text-white">
+                            <p className="text-xs text-muted-foreground">RR Levels</p>
+                            <p className="text-sm font-bold text-foreground">
                               TP1: 1:{trade.rr1} | TP2: 1:{trade.rr2} | TP3: 1:{trade.rr3} | TP4: 1:{trade.rrMax}
                             </p>
                           </div>
                           <div>
-                            <p className="text-xs text-slate-500">Quality Score</p>
+                            <p className="text-xs text-muted-foreground">Quality Score</p>
                             <p className={`text-sm font-bold ${getQualityColor(trade.qualityScore)}`}>
                               {trade.qualityScore.toFixed(1)} / 100
                             </p>
                           </div>
                           <div>
-                            <p className="text-xs text-slate-500">Signal Time</p>
-                            <p className="text-sm font-bold text-white">{new Date(trade.firedAt).toLocaleString()}</p>
+                            <p className="text-xs text-muted-foreground">Signal Time</p>
+                            <p className="text-sm font-bold text-foreground">{new Date(trade.firedAt).toLocaleString()}</p>
                           </div>
                         </div>
                       </CardContent>
@@ -753,8 +769,8 @@ export default function LiveTradesPage() {
                     <svg viewBox="0 0 160 80" className="w-full h-full">
                       <defs>
                         <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#ef4444" />
-                          <stop offset="100%" stopColor="#10b981" />
+                          <stop offset="0%" stopColor="var(--chart-4)" />
+                          <stop offset="100%" stopColor="var(--chart-1)" />
                         </linearGradient>
                       </defs>
                       <path d="M 10 80 A 70 70 0 0 1 150 80" fill="none" stroke="url(#gaugeGrad)" strokeWidth="8" />
@@ -793,35 +809,35 @@ export default function LiveTradesPage() {
                 <div className="flex items-center gap-4 py-2">
                   <div className="relative w-20 h-20">
                     <svg viewBox="0 0 80 80" className="w-full h-full -rotate-90">
-                      <circle cx="40" cy="40" r="32" fill="none" stroke="#1e293b" strokeWidth="8" />
+                      <circle cx="40" cy="40" r="32" fill="none" stroke="var(--border)" strokeWidth="8" />
                       <circle
                         cx="40"
                         cy="40"
                         r="32"
                         fill="none"
-                        stroke="#10b981"
+                        stroke="var(--chart-1)"
                         strokeWidth="8"
                         strokeDasharray={`${(strongSignals / Math.max(totalSignals, 1)) * 201} 201`}
                       />
                     </svg>
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-lg font-bold text-white">
+                      <span className="text-lg font-bold text-foreground">
                         {totalSignals > 0 ? Math.round((strongSignals / totalSignals) * 100) : 0}%
                       </span>
                     </div>
                   </div>
                   <div className="flex-1 space-y-2">
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-400">Strong</span>
+                      <span className="text-muted-foreground">Strong</span>
                       <span className="text-emerald-400 font-medium">{strongSignals}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-400">Standard</span>
+                      <span className="text-muted-foreground">Standard</span>
                       <span className="text-amber-400 font-medium">{standardSignals}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-400">Total</span>
-                      <span className="text-white font-medium">{totalSignals}</span>
+                      <span className="text-muted-foreground">Total</span>
+                      <span className="text-foreground font-medium">{totalSignals}</span>
                     </div>
                   </div>
                 </div>
@@ -832,36 +848,36 @@ export default function LiveTradesPage() {
                 <div className="space-y-3 py-2">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-xs text-slate-500">Open Signals</p>
+                      <p className="text-xs text-muted-foreground">Open Signals</p>
                       <p className="text-lg font-bold text-blue-400">{activeTrades}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-slate-500">Total Signals</p>
-                      <p className="text-sm text-slate-400">{totalSignals}</p>
+                      <p className="text-xs text-muted-foreground">Total Signals</p>
+                      <p className="text-sm text-muted-foreground">{totalSignals}</p>
                     </div>
                   </div>
-                  <div className="w-full bg-[#1e293b] rounded-full h-2">
+                  <div className="w-full bg-muted rounded-full h-2">
                     <div
                       className="h-2 rounded-full bg-blue-500 transition-all duration-500"
                       style={{ width: `${totalSignals > 0 ? (activeTrades / totalSignals) * 100 : 0}%` }}
                     />
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-400">Avg Quality Score</span>
-                    <span className="text-white font-medium">
+                    <span className="text-muted-foreground">Avg Quality Score</span>
+                    <span className="text-foreground font-medium">
                       {trades.length > 0
                         ? (trades.reduce((sum, t) => sum + t.qualityScore, 0) / trades.length).toFixed(1)
                         : "0.0"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-400">Positions</span>
-                    <span className="text-white font-medium">{activeTrades}</span>
+                    <span className="text-muted-foreground">Positions</span>
+                    <span className="text-foreground font-medium">{activeTrades}</span>
                   </div>
                   {lastUpdated && (
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-400">Last Updated</span>
-                      <span className="text-slate-500">{lastUpdated.toLocaleTimeString()}</span>
+                      <span className="text-muted-foreground">Last Updated</span>
+                      <span className="text-muted-foreground">{lastUpdated.toLocaleTimeString()}</span>
                     </div>
                   )}
                 </div>
@@ -876,9 +892,9 @@ export default function LiveTradesPage() {
                   <SummaryRow
                     label="Best Quality"
                     value={bestTrade ? `${bestTrade.symbol} (${bestTrade.qualityScore.toFixed(1)})` : "N/A"}
-                    valueColor={bestTrade ? getQualityColor(bestTrade.qualityScore) : "text-slate-400"}
+                    valueColor={bestTrade ? getQualityColor(bestTrade.qualityScore) : "text-muted-foreground"}
                   />
-                  <SummaryRow label="Total Signals" value={String(totalSignals)} valueColor="text-white" />
+                  <SummaryRow label="Total Signals" value={String(totalSignals)} valueColor="text-foreground" />
                 </div>
               </SidebarCard>
             </div>
@@ -891,11 +907,11 @@ export default function LiveTradesPage() {
 
 function SidebarCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Card className="bg-[#111827] border-[#1e293b]">
+    <Card className="">
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
-          <h3 className="text-sm font-semibold text-white">{title}</h3>
-          <Info className="w-3.5 h-3.5 text-slate-500 hover:text-slate-400 cursor-pointer" />
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <Info className="w-3.5 h-3.5 text-muted-foreground hover:text-muted-foreground cursor-pointer" />
         </div>
         {children}
       </CardContent>
@@ -906,7 +922,7 @@ function SidebarCard({ title, children }: { title: string; children: React.React
 function SummaryRow({
   label,
   value,
-  valueColor = "text-white",
+  valueColor = "text-foreground",
 }: {
   label: string;
   value: string;
@@ -914,7 +930,7 @@ function SummaryRow({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-sm text-slate-400">{label}</span>
+      <span className="text-sm text-muted-foreground">{label}</span>
       <span className={`text-sm font-medium ${valueColor}`}>{value}</span>
     </div>
   );

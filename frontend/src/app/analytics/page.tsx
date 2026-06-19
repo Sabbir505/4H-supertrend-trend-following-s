@@ -23,28 +23,28 @@ import {
 import { getAllSignals, getAnalyticsSummary, Signal, AnalyticsSummary } from "@/lib/api";
 import { calculateRR } from "@/lib/utils";
 
-const COLORS = ["#10b981", "#ef4444", "#f59e0b", "#6366f1", "#8b5cf6", "#ec4899", "#14b8a6"];
+const COLORS = ["var(--chart-1)", "var(--chart-4)", "var(--chart-3)", "var(--chart-5)", "var(--chart-5)", "#ec4899", "#14b8a6"];
 
 const outcomeColors: Record<string, string> = {
-  "TP1 Hit": "#10b981",
-  "TP2 Hit": "#10b981",
-  "TP3 Hit": "#10b981",
-  "TP4 Hit": "#10b981",
-  TP1: "#10b981",
-  TP2: "#10b981",
-  TP3: "#10b981",
-  TP4: "#10b981",
-  WIN: "#10b981",
-  SL: "#ef4444",
-  BREAKEVEN: "#f59e0b",
-  EXPIRED: "#6366f1",
+  "TP1 Hit": "var(--chart-1)",
+  "TP2 Hit": "var(--chart-1)",
+  "TP3 Hit": "var(--chart-1)",
+  "TP4 Hit": "var(--chart-1)",
+  TP1: "var(--chart-1)",
+  TP2: "var(--chart-1)",
+  TP3: "var(--chart-1)",
+  TP4: "var(--chart-1)",
+  WIN: "var(--chart-1)",
+  SL: "var(--chart-4)",
+  BREAKEVEN: "var(--chart-3)",
+  EXPIRED: "var(--chart-5)",
 };
 
 function StatCard({
   title,
   value,
   subtitle,
-  valueColor = "text-white",
+  valueColor = "text-foreground",
 }: {
   title: string;
   value: string;
@@ -52,11 +52,11 @@ function StatCard({
   valueColor?: string;
 }) {
   return (
-    <Card className="bg-[#111827] border-[#1e293b]">
+    <Card className="">
       <CardContent className="p-5">
-        <p className="text-xs text-slate-500 uppercase tracking-wide">{title}</p>
+        <p className="text-xs text-muted-foreground uppercase tracking-wide">{title}</p>
         <p className={`text-2xl font-bold mt-1 ${valueColor}`}>{value}</p>
-        <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
       </CardContent>
     </Card>
   );
@@ -134,10 +134,10 @@ export default function AnalyticsPage() {
       }
     });
     const data = [];
-    if (loss > 0) data.push({ name: "Loss", value: loss, color: "#ef4444" });
-    if (expired > 0) data.push({ name: "Expired", value: expired, color: "#6366f1" });
-    if (breakeven > 0) data.push({ name: "Breakeven", value: breakeven, color: "#f59e0b" });
-    if (win > 0) data.push({ name: "Win", value: win, color: "#10b981" });
+    if (loss > 0) data.push({ name: "Loss", value: loss, color: "var(--chart-4)" });
+    if (expired > 0) data.push({ name: "Expired", value: expired, color: "var(--chart-5)" });
+    if (breakeven > 0) data.push({ name: "Breakeven", value: breakeven, color: "var(--chart-3)" });
+    if (win > 0) data.push({ name: "Win", value: win, color: "var(--chart-1)" });
     return data;
   }, [filteredSignals]);
 
@@ -228,8 +228,27 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-slate-400">Loading analytics...</div>
+        <div className="space-y-6 animate-pulse">
+          <div className="h-8 w-36 bg-muted rounded" />
+          <div className="grid grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="bg-card border border-border rounded-xl p-5 space-y-3">
+                <div className="h-3 w-20 bg-muted rounded" />
+                <div className="h-7 w-16 bg-muted rounded" />
+                <div className="h-3 w-24 bg-muted rounded" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-6">
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="h-4 w-36 bg-muted rounded mb-4" />
+              <div className="h-48 bg-muted/50 rounded" />
+            </div>
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="h-4 w-36 bg-muted rounded mb-4" />
+              <div className="h-48 bg-muted/50 rounded" />
+            </div>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -251,8 +270,8 @@ export default function AnalyticsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white">Analytics</h1>
-            <p className="text-sm text-slate-400 mt-1">
+            <h1 className="text-2xl font-semibold text-foreground">Analytics</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               Deep-dive into your trading performance metrics
             </p>
           </div>
@@ -261,7 +280,7 @@ export default function AnalyticsPage() {
             <select
               value={filterDirection}
               onChange={(e) => setFilterDirection(e.target.value)}
-              className="bg-[#1e293b] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+              className="bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
               <option value="ALL">All Directions</option>
               <option value="LONG">LONG</option>
@@ -271,7 +290,7 @@ export default function AnalyticsPage() {
             <select
               value={filterSymbol}
               onChange={(e) => setFilterSymbol(e.target.value)}
-              className="bg-[#1e293b] border border-[#1e293b] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+              className="bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
               {uniqueSymbols.map((s) => (
                 <option key={s} value={s}>
@@ -288,7 +307,7 @@ export default function AnalyticsPage() {
             title="Total Trades"
             value={String(totalTrades)}
             subtitle="Closed signals analyzed"
-            valueColor="text-white"
+            valueColor="text-foreground"
           />
           <StatCard
             title="Win Rate"
@@ -313,14 +332,14 @@ export default function AnalyticsPage() {
         {/* Charts Row 1: Outcome Distribution + Direction Performance */}
         <div className="grid grid-cols-2 gap-6">
           {/* Outcome Distribution Pie */}
-          <Card className="bg-[#111827] border-[#1e293b]">
+          <Card className="">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Outcome Distribution</h3>
-                <Info className="w-3.5 h-3.5 text-slate-500" />
+                <h3 className="text-sm font-semibold text-foreground">Outcome Distribution</h3>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               {outcomeData.length === 0 ? (
-                <div className="flex items-center justify-center h-64 text-slate-400">No data</div>
+                <div className="flex items-center justify-center h-64 text-muted-foreground">No data</div>
               ) : (
                 <div className="flex items-center gap-4">
                   <ResponsiveContainer width="60%" height={220} minHeight={200}>
@@ -339,9 +358,9 @@ export default function AnalyticsPage() {
                         ))}
                       </Pie>
                       <Tooltip
-                        contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                        labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                        contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                        labelStyle={{ color: "var(--popover-foreground)" }}
+                        itemStyle={{ color: "var(--popover-foreground)" }}
                         formatter={(value) => [`${value} trades`, ""]}
                       />
                     </PieChart>
@@ -351,11 +370,11 @@ export default function AnalyticsPage() {
                       <div key={d.name} className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color }} />
-                          <span className="text-sm text-slate-300">{d.name}</span>
+                          <span className="text-sm text-foreground/80">{d.name}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-white">{d.value}</span>
-                          <span className="text-xs text-slate-500">
+                          <span className="text-sm font-medium text-foreground">{d.value}</span>
+                          <span className="text-xs text-muted-foreground">
                             ({totalTrades > 0 ? ((d.value / totalTrades) * 100).toFixed(1) : 0}%)
                           </span>
                         </div>
@@ -368,31 +387,31 @@ export default function AnalyticsPage() {
           </Card>
 
           {/* Direction Performance Bar */}
-          <Card className="bg-[#111827] border-[#1e293b]">
+          <Card className="">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Direction Performance</h3>
-                <Info className="w-3.5 h-3.5 text-slate-500" />
+                <h3 className="text-sm font-semibold text-foreground">Direction Performance</h3>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               <ResponsiveContainer width="100%" height={220} minHeight={200}>
                 <BarChart data={directionData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="direction" stroke="#64748b" fontSize={12} />
-                  <YAxis stroke="#64748b" fontSize={12} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="direction" stroke="var(--muted-foreground)" fontSize={12} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={12} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                    labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                    contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                    labelStyle={{ color: "var(--popover-foreground)" }}
+                        itemStyle={{ color: "var(--popover-foreground)" }}
                   />
-                  <Bar dataKey="wins" fill="#10b981" name="Wins" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="losses" fill="#ef4444" name="Losses" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="breakevens" fill="#f59e0b" name="Breakevens" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="wins" fill="var(--chart-1)" name="Wins" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="losses" fill="var(--chart-4)" name="Losses" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="breakevens" fill="var(--chart-3)" name="Breakevens" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
               <div className="flex items-center justify-center gap-6 mt-2">
                 {directionData.map((d) => (
                   <div key={d.direction} className="text-center">
-                    <p className="text-xs text-slate-400">{d.direction} Win Rate</p>
+                    <p className="text-xs text-muted-foreground">{d.direction} Win Rate</p>
                     <p className={`text-sm font-bold ${d.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>
                       {d.winRate}% ({d.total} trades)
                     </p>
@@ -406,39 +425,39 @@ export default function AnalyticsPage() {
         {/* Charts Row 2: Symbol Performance + Day of Week */}
         <div className="grid grid-cols-2 gap-6">
           {/* Symbol Performance */}
-          <Card className="bg-[#111827] border-[#1e293b]">
+          <Card className="">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Symbol Performance</h3>
-                <Info className="w-3.5 h-3.5 text-slate-500" />
+                <h3 className="text-sm font-semibold text-foreground">Symbol Performance</h3>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               {symbolPerformance.length === 0 ? (
-                <div className="flex items-center justify-center h-64 text-slate-400">No data</div>
+                <div className="flex items-center justify-center h-64 text-muted-foreground">No data</div>
               ) : (
                 <>
                   <ResponsiveContainer width="100%" height={220} minHeight={200}>
                     <BarChart data={symbolPerformance} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis type="number" stroke="#64748b" fontSize={12} />
-                      <YAxis dataKey="symbol" type="category" stroke="#64748b" fontSize={11} width={70} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis type="number" stroke="var(--muted-foreground)" fontSize={12} />
+                      <YAxis dataKey="symbol" type="category" stroke="var(--muted-foreground)" fontSize={11} width={70} />
                       <Tooltip
-                        contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                        labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                        contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                        labelStyle={{ color: "var(--popover-foreground)" }}
+                        itemStyle={{ color: "var(--popover-foreground)" }}
                         formatter={(value, name) => {
                           if (name === "winRate") return [`${value}%`, "Win Rate"];
                           return [value, name === "totalTrades" ? "Trades" : "Total RR"];
                         }}
                       />
-                      <Bar dataKey="winRate" fill="#10b981" name="winRate" radius={[0, 4, 4, 0]} />
+                      <Bar dataKey="winRate" fill="var(--chart-1)" name="winRate" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                   <div className="grid grid-cols-3 gap-2 mt-3">
                     {symbolPerformance.slice(0, 6).map((s) => (
-                      <div key={s.symbol} className="bg-[#1e293b]/50 rounded p-2">
-                        <p className="text-xs text-slate-400">{s.symbol}</p>
-                        <p className="text-sm font-bold text-white">{s.winRate}% WR</p>
-                        <p className="text-xs text-slate-500">{s.totalTrades} trades | {s.totalRR >= 0 ? "+" : ""}{s.totalRR}R</p>
+                      <div key={s.symbol} className="bg-muted/50 rounded p-2">
+                        <p className="text-xs text-muted-foreground">{s.symbol}</p>
+                        <p className="text-sm font-bold text-foreground">{s.winRate}% WR</p>
+                        <p className="text-xs text-muted-foreground">{s.totalTrades} trades | {s.totalRR >= 0 ? "+" : ""}{s.totalRR}R</p>
                       </div>
                     ))}
                   </div>
@@ -448,34 +467,34 @@ export default function AnalyticsPage() {
           </Card>
 
           {/* Day of Week Analysis */}
-          <Card className="bg-[#111827] border-[#1e293b]">
+          <Card className="">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Performance by Day</h3>
-                <Info className="w-3.5 h-3.5 text-slate-500" />
+                <h3 className="text-sm font-semibold text-foreground">Performance by Day</h3>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               <ResponsiveContainer width="100%" height={220} minHeight={200}>
                 <BarChart data={dayOfWeekData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="day" stroke="#64748b" fontSize={12} />
-                  <YAxis stroke="#64748b" fontSize={12} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="day" stroke="var(--muted-foreground)" fontSize={12} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={12} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                    labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                    contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                    labelStyle={{ color: "var(--popover-foreground)" }}
+                        itemStyle={{ color: "var(--popover-foreground)" }}
                   />
-                  <Bar dataKey="wins" fill="#10b981" name="Wins" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="total" fill="#1e293b" name="Total" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="wins" fill="var(--chart-1)" name="Wins" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="total" fill="var(--muted)" name="Total" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
               <div className="flex items-center justify-center gap-4 mt-2">
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded bg-emerald-500" />
-                  <span className="text-xs text-slate-400">Wins</span>
+                  <span className="text-xs text-muted-foreground">Wins</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-[#1e293b]" />
-                  <span className="text-xs text-slate-400">Total</span>
+                  <div className="w-3 h-3 rounded bg-muted" />
+                  <span className="text-xs text-muted-foreground">Total</span>
                 </div>
               </div>
             </CardContent>
@@ -485,34 +504,34 @@ export default function AnalyticsPage() {
         {/* Charts Row 3: Strength + Quality Distribution */}
         <div className="grid grid-cols-2 gap-6">
           {/* Strength Performance */}
-          <Card className="bg-[#111827] border-[#1e293b]">
+          <Card className="">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Strength vs Performance</h3>
-                <Info className="w-3.5 h-3.5 text-slate-500" />
+                <h3 className="text-sm font-semibold text-foreground">Strength vs Performance</h3>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               <ResponsiveContainer width="100%" height={220} minHeight={200}>
                 <BarChart data={strengthData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                  <XAxis dataKey="strength" stroke="#64748b" fontSize={12} />
-                  <YAxis stroke="#64748b" fontSize={12} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="strength" stroke="var(--muted-foreground)" fontSize={12} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={12} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                    labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                    contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                    labelStyle={{ color: "var(--popover-foreground)" }}
+                        itemStyle={{ color: "var(--popover-foreground)" }}
                     formatter={(value, name) => {
                       if (name === "winRate") return [`${value}%`, "Win Rate"];
                       return [value, "Total Trades"];
                     }}
                   />
-                  <Bar dataKey="total" fill="#6366f1" name="total" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="winRate" fill="#10b981" name="winRate" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="total" fill="var(--chart-5)" name="total" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="winRate" fill="var(--chart-1)" name="winRate" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
               <div className="flex items-center justify-center gap-6 mt-2">
                 {strengthData.map((s) => (
                   <div key={s.strength} className="text-center">
-                    <p className="text-xs text-slate-400">{s.strength}</p>
+                    <p className="text-xs text-muted-foreground">{s.strength}</p>
                     <p className={`text-sm font-bold ${s.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>
                       {s.winRate}% ({s.total})
                     </p>
@@ -523,22 +542,22 @@ export default function AnalyticsPage() {
           </Card>
 
           {/* Quality Score Distribution */}
-          <Card className="bg-[#111827] border-[#1e293b]">
+          <Card className="">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-white">Quality Score Distribution</h3>
-                <Info className="w-3.5 h-3.5 text-slate-500" />
+                <h3 className="text-sm font-semibold text-foreground">Quality Score Distribution</h3>
+                <Info className="w-3.5 h-3.5 text-muted-foreground" />
               </div>
               {filteredSignals.length === 0 ? (
-                <div className="flex items-center justify-center h-64 text-slate-400">No data</div>
+                <div className="flex items-center justify-center h-64 text-muted-foreground">No data</div>
               ) : (
                 <>
                   {(() => {
                     const ranges = [
-                      { label: "0-25", min: 0, max: 25, color: "#ef4444" },
-                      { label: "25-50", min: 25, max: 50, color: "#f59e0b" },
-                      { label: "50-70", min: 50, max: 70, color: "#6366f1" },
-                      { label: "70-85", min: 70, max: 85, color: "#10b981" },
+                      { label: "0-25", min: 0, max: 25, color: "var(--chart-4)" },
+                      { label: "25-50", min: 25, max: 50, color: "var(--chart-3)" },
+                      { label: "50-70", min: 50, max: 70, color: "var(--chart-5)" },
+                      { label: "70-85", min: 70, max: 85, color: "var(--chart-1)" },
                       { label: "85-100", min: 85, max: 101, color: "#059669" },
                     ];
                     const distData = ranges.map((r) => ({
@@ -550,13 +569,13 @@ export default function AnalyticsPage() {
                       <>
                         <ResponsiveContainer width="100%" height={220} minHeight={200}>
                           <BarChart data={distData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                            <XAxis dataKey="range" stroke="#64748b" fontSize={12} />
-                            <YAxis stroke="#64748b" fontSize={12} />
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                            <XAxis dataKey="range" stroke="var(--muted-foreground)" fontSize={12} />
+                            <YAxis stroke="var(--muted-foreground)" fontSize={12} />
                             <Tooltip
-                              contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px" }}
-                              labelStyle={{ color: "#f8fafc" }}
-                        itemStyle={{ color: "#f8fafc" }}
+                              contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                              labelStyle={{ color: "var(--popover-foreground)" }}
+                        itemStyle={{ color: "var(--popover-foreground)" }}
                             />
                             <Bar dataKey="count" name="Trades" radius={[4, 4, 0, 0]}>
                               {distData.map((entry, i) => (
