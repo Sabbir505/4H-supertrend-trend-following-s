@@ -10,10 +10,7 @@ import {
   BarChart3,
   FlaskConical,
   Newspaper,
-  Settings,
   TrendingUp,
-  Moon,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -96,7 +93,7 @@ export function Sidebar({ onCollapseChange }: { onCollapseChange?: (collapsed: b
         })}
       </nav>
 
-      {/* Market Status + Theme */}
+      {/* Market Status */}
       <div className="px-3 py-4 border-t border-[#1e293b] space-y-3">
         {!collapsed && (
           <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium px-3">Market Status</p>
@@ -105,40 +102,24 @@ export function Sidebar({ onCollapseChange }: { onCollapseChange?: (collapsed: b
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
             {!collapsed && (
-              <>
-                <span className="text-sm text-white font-medium">Market Open</span>
-              </>
+              <span className="text-sm text-white font-medium">24/7 Crypto</span>
             )}
           </div>
-          {!collapsed && <p className="text-xs text-emerald-400 mt-0.5">All Systems Operational</p>}
+          {!collapsed && <p className="text-xs text-emerald-400 mt-0.5">Bot Active</p>}
         </div>
-        <button
-          onClick={() => alert("Theme toggle coming soon!")}
-          className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-[#1e293b]/50 transition-colors w-full",
-            collapsed && "justify-center px-0"
-          )}
-          title={collapsed ? "Theme" : undefined}
-        >
-          <Moon className="w-5 h-5 flex-shrink-0" />
-          {!collapsed && "Theme"}
-        </button>
       </div>
 
       {/* User Profile */}
       <div className="px-3 py-4 border-t border-[#1e293b]">
         <div className={cn("flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#1e293b]/50 transition-colors cursor-pointer", collapsed && "justify-center px-0")}>
           <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
-            <span className="text-sm font-bold text-[#0b0f19]">TR</span>
+            <span className="text-sm font-bold text-[#0b0f19]">TE</span>
           </div>
           {!collapsed && (
-            <>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-white truncate">Trader</p>
-                <p className="text-xs text-slate-500">Pro Plan</p>
-              </div>
-              <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
-            </>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-white truncate">TradeEdge</p>
+              <p className="text-xs text-slate-500">Signal Bot</p>
+            </div>
           )}
         </div>
       </div>
