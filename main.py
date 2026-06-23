@@ -314,6 +314,51 @@ def get_market_regime(scanner, signal_engine) -> str:
         return 'NEUTRAL'
 
 
+def run_4h_ema_crossover_scan():
+    """Runs every 4H alongside trend scan — checks top 100 by market cap for EMA21/55 crossovers."""
+    logger.info("=== 4H EMA CROSSOVER SCAN STARTED ===")
+
+    # Get top 100 by market cap (informational scan)
+    symbols = scanner.get_top_100_by_market_cap()
+    if not symbols:
+        logger.warning("No market cap symbols fetched, skipping EMA crossover scan")
+        return
+
+    logger.info(f"Checking EMA crossovers for {len(symbols)} symbols...")
+
+    # Check for EMA21/55 crossovers on 4H
+    crossovers = scanner.check_ema_crossovers(
+        symbols=symbols,
+        interval='4h',
+        ema_fast=config.regime_ema_fast,
+        ema_slow=config.regime_ema_slow
+    )
+
+    if not crossovers:
+        logger.info("No EMA crossovers detected this scan.")
+        return
+
+    logger.info(f"EMA crossovers detected: {len(crossovers)}")
+
+    # Send alerts for each crossover (informational only, not stored)
+    for alert in crossovers:
+        try:
+            # Add EMA periods to alert dict for formatting
+            alert['ema_fast_period'] = config.regime_ema_fast
+            alert['ema_slow_period'] = config.regime_ema_slow
+            telegram.send_ema_crossover_alert(alert)
+            logger.info(
+                f"EMA Alert sent: {alert['symbol']} {alert['crossover_type']} "
+                f"(price={alert['price']}, EMA{config.regime_ema_fast}={alert['ema_fast']}, "
+                f"EMA{config.regime_ema_slow}={alert['ema_slow']})"
+            )
+            time.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Failed to send EMA crossover alert: {e}")
+
+    logger.info("=== 4H EMA CROSSOVER SCAN COMPLETE ===")
+
+
 def run_4h_scan():
     """Runs every 4H — updates trend bias for all coins + BTC regime"""
     logger.info("=== 4H TREND SCAN STARTED ===")
@@ -344,11 +389,6 @@ def run_4h_scan():
 def run_1h_scan():
     """Runs every 1H — checks 1H signals with all filters applied"""
     global market_regime  # Only market_regime is assigned, win_predictor is read-only
-
-    # ── TRADING HOURS FILTER ─────────────────────────────────────────────
-    if not is_good_trading_hour(config):
-        logger.info("=== 1H SCAN SKIPPED — Outside trading hours ===")
-        return
 
     logger.info("=== 1H SIGNAL SCAN STARTED ===")
 
@@ -500,6 +540,7 @@ def run_monitor():
 def run_startup():
     logger.info("Bot starting — running initial scans...")
     run_4h_scan()
+    run_4h_ema_crossover_scan()
     run_1h_scan()
     logger.info("Startup complete. Scheduler running.")
 
@@ -565,9 +606,11 @@ if __name__ == "__main__":
     # Run at minute 05 to give 4H scan time to complete (runs at minute 02)
     schedule.every().hour.at(":05").do(run_1h_scan)
 
-    # 4H trend update
+    # 4H trend update and EMA crossover scan
     for hour in [0, 4, 8, 12, 16, 20]:
         schedule.every().day.at(f"{hour:02d}:02").do(run_4h_scan)
+        # EMA crossover scan runs 2 minutes after trend scan
+        schedule.every().day.at(f"{hour:02d}:04").do(run_4h_ema_crossover_scan)
 
     # Price monitor every 5 min (fallback when WebSocket disconnects)
     schedule.every(5).minutes.do(run_monitor)

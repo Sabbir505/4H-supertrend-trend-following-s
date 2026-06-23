@@ -2,7 +2,7 @@
 
 ## Theme
 
-Dark mode only. Deep navy/black background with subtle borders. Data visualization uses a restricted palette of emerald, blue, purple, and amber accents against dark surfaces.
+Dark mode default with light mode support. Deep navy/black background with subtle borders. Data visualization uses a restricted palette of emerald, blue, purple, and amber accents against dark surfaces.
 
 ## Color Palette
 
@@ -64,3 +64,11 @@ Dark mode only. Deep navy/black background with subtle borders. Data visualizati
 - Main content area with padding
 - Grid-based responsive layouts
 - Cards with consistent border radius (2xl)
+
+## Theme Support
+
+The dashboard supports both light and dark modes via `next-themes`:
+- Default: Dark mode
+- Toggle: Available in sidebar
+- Persisted: Theme preference saved in localStorage
+- CSS variables: Uses `var(--chart-1)`, `var(--chart-4)`, etc. for chart colors

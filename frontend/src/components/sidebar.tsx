@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   LayoutDashboard,
@@ -49,6 +49,11 @@ export function Sidebar({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const toggleCollapse = () => {
     const newState = !collapsed;
@@ -160,9 +165,10 @@ export function Sidebar({
           >
             <Sun className="w-[18px] h-[18px] shrink-0 hidden dark:block" />
             <Moon className="w-[18px] h-[18px] shrink-0 dark:hidden" />
-            {!collapsed && (
+            {!collapsed && mounted && (
               <span>{theme === "dark" ? "Light Mode" : "Dark Mode"}</span>
             )}
+            {!collapsed && !mounted && <span>Toggle theme</span>}
           </button>
         </div>
 

@@ -75,8 +75,9 @@ export default function TradeHistoryPage() {
       try {
         const data = await getAllSignals();
         if (!isMounted) return;
-        // Filter to only fully closed signals (TP1/TP2/TP3 are still partially open)
-        const closedStatuses = ["TP4", "SL", "BREAKEVEN", "EXPIRED", "WIN"];
+        // Filter to closed signals — TP1-TP3 are partial but have realized RR,
+        // so include them for a complete history view
+        const closedStatuses = ["TP1", "TP2", "TP3", "TP4", "SL", "BREAKEVEN", "EXPIRED", "WIN"];
         const closed = data.filter((s) => closedStatuses.includes(s.status));
         setSignals(closed);
       } catch (err) {

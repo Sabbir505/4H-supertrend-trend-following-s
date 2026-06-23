@@ -128,6 +128,107 @@ class CryptoScanner:
             logger.error(f"Failed to fetch symbols: {e}")
             return self._symbol_cache  # Return cached on failure
 
+    def get_top_100_by_market_cap(self) -> list:
+        """
+        Returns top 100 USDT pairs by market cap from CoinGecko,
+        mapped to Binance spot symbols. Excludes stablecoins.
+        """
+        try:
+            # CoinGecko API: top 100 coins by market cap
+            url = "https://api.coingecko.com/api/v3/coins/markets"
+            params = {
+                'vs_currency': 'usd',
+                'order': 'market_cap_desc',
+                'per_page': 100,
+                'page': 1,
+                'sparkline': 'false'
+            }
+            response = requests.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            coins = response.json()
+
+            symbols = []
+            for coin in coins:
+                symbol_upper = coin.get('symbol', '').upper()
+                if not symbol_upper:
+                    continue
+                # Skip stablecoins
+                if symbol_upper in self.config.stable_coins:
+                    continue
+                # Map to Binance USDT pair
+                binance_symbol = f"{symbol_upper}USDT"
+                symbols.append(binance_symbol)
+
+            logger.info(f"Market cap top 100: {len(symbols)} symbols fetched")
+            return symbols
+
+        except Exception as e:
+            logger.error(f"Failed to fetch market cap data: {e}")
+            return []
+
+    def check_ema_crossovers(self, symbols: list, interval: str = '4h', ema_fast: int = 21, ema_slow: int = 55) -> list:
+        """
+        Check for EMA crossovers for a list of symbols.
+        Returns list of dicts with symbol, crossover_type, price, ema_fast, ema_slow.
+        crossover_type: 'GOLDEN_CROSS' (price/EMA fast crossing above EMA slow)
+                        or 'DEATH_CROSS' (price/EMA fast crossing below EMA slow)
+        Only reports when a crossover is detected (previous candle on opposite side).
+        """
+        crossovers = []
+
+        for symbol in symbols:
+            try:
+                df = self.fetch_candles(symbol, interval, limit=100)
+                if df is None or len(df) < ema_slow + 5:
+                    continue
+
+                close = df['close']
+
+                # Calculate EMAs
+                ema_f = close.ewm(span=ema_fast, adjust=False).mean()
+                ema_s = close.ewm(span=ema_slow, adjust=False).mean()
+
+                # Need at least 2 candles to detect a crossover
+                if len(ema_f) < 2 or len(ema_s) < 2:
+                    continue
+
+                prev_fast = ema_f.iloc[-2]
+                prev_slow = ema_s.iloc[-2]
+                curr_fast = ema_f.iloc[-1]
+                curr_slow = ema_s.iloc[-1]
+                curr_price = close.iloc[-1]
+
+                prev_position = prev_fast - prev_slow
+                curr_position = curr_fast - curr_slow
+
+                # Detect crossover: signs differ (one above, one below)
+                if prev_position <= 0 and curr_position > 0:
+                    crossovers.append({
+                        'symbol': symbol,
+                        'crossover_type': 'GOLDEN_CROSS',
+                        'price': round(curr_price, 6),
+                        'ema_fast': round(curr_fast, 6),
+                        'ema_slow': round(curr_slow, 6),
+                        'interval': interval
+                    })
+                elif prev_position >= 0 and curr_position < 0:
+                    crossovers.append({
+                        'symbol': symbol,
+                        'crossover_type': 'DEATH_CROSS',
+                        'price': round(curr_price, 6),
+                        'ema_fast': round(curr_fast, 6),
+                        'ema_slow': round(curr_slow, 6),
+                        'interval': interval
+                    })
+
+                time.sleep(0.1)  # Rate limit protection
+
+            except Exception as e:
+                logger.debug(f"EMA check error for {symbol}: {e}")
+                continue
+
+        return crossovers
+
     def fetch_candles(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
         """
         Fetches OHLCV candles from Binance for a symbol/interval.

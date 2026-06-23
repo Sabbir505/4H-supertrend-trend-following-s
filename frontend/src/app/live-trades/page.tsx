@@ -326,7 +326,9 @@ export default function LiveTradesPage() {
         if (currentPrice && trade.entryPrice > 0) {
           const isLong = trade.direction === "LONG";
           const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
-          const slDistance = Math.abs(trade.entryPrice - trade.slPrice);
+          // Use sl_original if available (for trades that hit TP and moved SL to breakeven)
+          const slPrice = trade.sl_original || trade.sl;
+          const slDistance = Math.abs(trade.entryPrice - slPrice);
           return {
             ...trade,
             currentPrice,
@@ -344,7 +346,7 @@ export default function LiveTradesPage() {
         closedTrades.forEach(trade => {
           // Only send notification if we have a valid trade that was actually open
           if (trade.entryPrice > 0 && trade.symbol) {
-            sendTradeNotification(trade.symbol, "a target/stop loss");
+            sendTradeNotification(trade.symbol, trade.status);
           }
         });
       }
@@ -494,7 +496,7 @@ export default function LiveTradesPage() {
                   No active trades at the moment
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {trades.map((trade) => {
                   const isLong = trade.direction === "LONG";
                   // Calculate SL distance as percentage (absolute value)

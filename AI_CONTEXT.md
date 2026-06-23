@@ -23,11 +23,13 @@ TradeEdge is a cryptocurrency trading signal platform with a Python backend that
 | `scanner.py` | Market scanner fetching Binance data and detecting setups |
 | `backtest.py` | Backtesting engine with trade simulation |
 | `backtest_directional.py` | Directional strategy with BTC 4H trend filter |
-| `config.py` | Configuration (ATR multipliers, TP/SL settings) |
-| `tracker.py` | Trade tracking and status updates |
-| `telegram_bot.py` | Telegram notifications |
-| `reporter.py` | Reporting/analytics generation |
-| `data_splitter.py` | Archives old signals to `data/signals/YYYY/MM/` |
+| `backtest_macro_events.py` | Macro event avoidance filter analysis |
+| `backtest_trading_hours.py` | Trading hours filter analysis |
+| `config.py` | Configuration (ATR multipliers, TP/SL settings, trading hours) |
+| `tracker.py` | Trade tracking, WebSocket price monitoring, status updates |
+| `telegram_bot.py` | Telegram notifications (Cornix format) |
+| `reporter.py` | Daily/weekly performance reports |
+| `market_intel.py` | Economic calendar, crypto news, token events |
 
 ### Frontend (Next.js)
 
@@ -35,9 +37,10 @@ TradeEdge is a cryptocurrency trading signal platform with a Python backend that
 |------|---------|
 | `frontend/src/app/dashboard/page.tsx` | Main dashboard with stats, equity curve, charts |
 | `frontend/src/app/live-trades/page.tsx` | Real-time trade monitoring with Binance price feed |
-| `frontend/src/app/trade-history/page.tsx` | Closed trades history table |
+| `frontend/src/app/trade-history/page.tsx` | Closed trades history table with filters |
 | `frontend/src/app/analytics/page.tsx` | Analytics and performance metrics |
 | `frontend/src/app/backtest/page.tsx` | Backtest results viewer |
+| `frontend/src/app/market-intel/page.tsx` | Economic calendar, news, token events |
 | `frontend/src/lib/api.ts` | API client (fetch wrapper) with TypeScript interfaces |
 | `frontend/src/lib/utils.ts` | Utility functions (calculateRR, formatPrice, cn) |
 
@@ -45,9 +48,10 @@ TradeEdge is a cryptocurrency trading signal platform with a Python backend that
 
 | File | Purpose |
 |------|---------|
-| `signals.json` | Primary signal database (80 signals) |
+| `signals.json` | Primary signal database |
 | `backtest_results.json` | Backtest results |
-| `data/signals/2026/6/week_23.json` | Weekly signal archive |
+| `data/signals/YYYY/MM/week_XX.json` | Weekly signal archive |
+| `data/market_intel/` | Cached market intel data |
 
 ---
 
@@ -61,8 +65,8 @@ The system uses a 4-level take-profit strategy with incremental position closing
 |-------|---------|----------------|----------|
 | TP1 | 40% | 1.5x | rr1 = 1.5 |
 | TP2 | 30% | 2.0x | rr2 = 2.0 |
-| TP3 | 20% | 2.5x | rr3 = 3.0 |
-| TP4 | 10% | 3.0x | rr_max = 4.0 |
+| TP3 | 20% | 3.0x | rr3 = 3.0 |
+| TP4 | 10% | 4.0x | rr_max = 4.0 |
 
 **SL:** 1.0x ATR (full position)
 **Entry:** Based on EMA21/EMA55 + ADX + RSI + volume confirmation
@@ -79,7 +83,7 @@ The system uses a 4-level take-profit strategy with incremental position closing
 | WIN | Alternative TP4 status | Closed (win) |
 | SL | Hit stop loss | Closed (loss) |
 | BREAKEVEN | Moved SL to breakeven after hitting TP(s) | Closed (neutral) |
-| EXPIRED | Time-based expiry | Closed (neutral) |
+| EXPIRED | Time-based expiry (default 7 days) | Closed (neutral) |
 
 ### RR Calculation Rules
 
@@ -139,6 +143,15 @@ rr1 * 0.40 + rr2 * 0.30 + rr3 * 0.20 + rr_max * 0.10
 | `GET /api/backtest` | All backtest results |
 | `GET /api/backtest/{symbol}` | Backtest for specific symbol |
 
+### Market Intel
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/market/calendar` | Economic calendar events (next 14 days) |
+| `GET /api/market/news` | Crypto news from RSS feeds |
+| `GET /api/market/events` | Token events from CoinGecko |
+| `GET /api/market/impact` | Events affecting open positions |
+
 ---
 
 ## Data Models
@@ -155,11 +168,11 @@ interface Signal {
   sl: number;
   tp1: number;
   tp2: number;
-  tp3?: number;
-  tp4?: number;
+  tp3: number;
+  tp4: number;
   rr1: number;
-  rr2?: number;
-  rr3?: number;
+  rr2: number;
+  rr3: number;
   rr_max: number;
   quality_score: number;
   fired_at: string;
@@ -209,10 +222,10 @@ interface DashboardStats {
 
 ### API Client (`frontend/src/lib/api.ts`)
 
-- Base URL: `process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"`
+- Base URL: `process.env.NEXT_PUBLIC_API_URL || ""` (uses Next.js rewrite proxy)
 - Timeout: 10 seconds
 - Cache-busting headers: `Cache-Control: no-cache, no-store, must-revalidate`
-- Functions: `getAllSignals()`, `getOpenSignals()`, `getClosedSignals()`, `getDashboardStats()`, `getLiveTrades()`, `getAnalyticsSummary()`, `getBacktestResults()`
+- Functions: `getAllSignals()`, `getOpenSignals()`, `getClosedSignals()`, `getDashboardStats()`, `getLiveTrades()`, `getAnalyticsSummary()`, `getBacktestResults()`, `getEconomicCalendar()`, `getCryptoNews()`, `getTokenEvents()`, `getImpactAnalysis()`
 
 ### Utility Functions (`frontend/src/lib/utils.ts`)
 
@@ -225,29 +238,42 @@ interface DashboardStats {
 1. **Dashboard (`/dashboard`)**
    - Top stats cards (Total Signals, Win Rate, Avg Quality, Total RR, Backtest WR)
    - Equity Curve (cumulative RR over time)
-   - Outcome Distribution (pie chart)
+   - Outcome Distribution (pie chart: Loss, Expired, Breakeven, Win)
    - Symbol Win Rates (bar chart)
    - Recent Trades list
 
 2. **Live Trades (`/live-trades`)**
    - Real-time trade cards with Binance price feed
-   - Auto-refresh every 30 seconds
+   - Auto-refresh every 30 seconds with countdown
    - Shows: symbol, direction, strength, entry/SL/TP prices, current price, PNL
    - Sidebar: Market Bias gauge, Signal Strength donut, Active Trades Summary
 
 3. **Trade History (`/trade-history`)**
-   - Table of closed trades with filters
-   - Shows: symbol, direction, entry, SL, TP1, TP2, outcome, RR, quality score
+   - Table of closed trades with filters (search, outcome, direction, strength)
+   - Pagination (15 per page)
+   - Shows: symbol, direction, entry, SL, TP1-TP4, RR, quality score, outcome, strength, closed date
 
 4. **Analytics (`/analytics`)**
-   - Performance metrics: win rate, avg RR, profit factor
-   - Direction performance (LONG vs SHORT)
-   - Strength performance (STRONG vs STANDARD)
-   - Symbol performance table
+   - Outcome Distribution (pie chart)
+   - Direction Performance (LONG vs SHORT)
+   - Symbol Performance (bar chart)
+   - Strength vs Performance (STRONG vs STANDARD)
+   - Quality Score Distribution
+   - Time-based grouping (daily/monthly/yearly)
 
 5. **Backtest (`/backtest`)**
-   - Backtest results table
-   - Per-symbol performance metrics
+   - Backtest results table with per-symbol metrics
+   - Win Rate by Symbol bar chart
+   - Direction Performance (LONG vs SHORT)
+   - Total RR by Symbol
+   - Per-symbol detail cards
+
+6. **Market Intel (`/market-intel`)**
+   - Economic calendar with macOS-style calendar grid
+   - Crypto news from RSS feeds with sentiment
+   - Token events (unlocks, listings, etc.)
+   - Impact analysis for open positions
+   - Filter by impact level (HIGH, MEDIUM, LOW)
 
 ---
 
@@ -268,15 +294,15 @@ interface DashboardStats {
 
 ### PNL Calculation (Live Trades)
 
-- PNL is shown with **10x leverage**
-- Formula: `(priceDiff / entryPrice) * 100 * 10`
-- Also shows R-multiples: `priceDiff / slDistance`
+- PNL is shown in **R-multiples** (priceDiff / slDistance)
+- PNL % is (priceDiff / slDistance) * 100 (leverage not included in display)
+- Formula: `priceDiff / slDistance` where `priceDiff = currentPrice - entryPrice` (for LONG)
 
 ### Data Flow
 
-1. Python backend loads signals from `signals.json` or `data/signals/YYYY/MM/*.json`
+1. Python backend loads signals from `data/signals/YYYY/MM/*.json` or `signals.json`
 2. FastAPI serves data via REST endpoints
-3. Next.js frontend proxies `/api/*` to backend
+3. Next.js frontend proxies `/api/*` to backend via rewrite rule
 4. Frontend fetches data every 30 seconds (auto-refresh)
 
 ---
@@ -288,8 +314,7 @@ interface DashboardStats {
 **Fix:** Kill the Python process and restart:
 ```bash
 taskkill //F //PID <PID>
-cd /d/Main
-cd project/files && python api_server.py
+cd /d/Main project/files && python api_server.py
 ```
 
 ### 2. CORS Errors
@@ -297,8 +322,8 @@ cd project/files && python api_server.py
 **Fix:** Backend already has CORS configured for `localhost:3000` and `localhost:3001`
 
 ### 3. RR Values Corrupted
-**Symptom:** `rr3` shows 3.0 instead of 2.5, `rr_max` shows 4.0 instead of 3.0
-**Note:** These values are actually correct as configured. The ATR multipliers are:
+**Symptom:** `rr3` shows 3.0 instead of 2.5
+**Note:** This value is correct as configured. The ATR multipliers are:
 - TP1: 1.5x → rr1 = 1.5
 - TP2: 2.0x → rr2 = 2.0
 - TP3: 3.0x → rr3 = 3.0
@@ -313,7 +338,7 @@ netstat -ano | grep 8001
 
 ### 5. BREAKEVEN RR Calculation Wrong
 **Symptom:** BREAKEVEN trades show lower RR than expected
-**Fix:** Ensure `tp1_hit`, `tp2_hit`, `tp3_hit` booleans are set in signal data. The calculation uses these to determine which TPs were realized before breakeven.
+**Fix:** Ensure `tp1_hit`, `tp2_hit`, `tp3_hit`, `tp4_hit` booleans are set in signal data. The calculation uses these to determine which TPs were realized before breakeven.
 
 ---
 
@@ -328,12 +353,18 @@ D:\Main project\files\
 ├── scanner.py                 # Market scanner
 ├── backtest.py                # Backtesting engine
 ├── backtest_directional.py    # Directional strategy with BTC filter
+├── backtest_macro_events.py   # Macro event avoidance analysis
+├── backtest_trading_hours.py  # Trading hours filter analysis
 ├── config.py                  # Strategy configuration
+├── tracker.py                 # Position tracking + WebSocket
+├── telegram_bot.py            # Telegram notifications
+├── reporter.py                # Performance reports
+├── market_intel.py            # Market intelligence
 ├── signals.json               # Signal database
 ├── backtest_results.json      # Backtest results
 ├── data/
-│   ├── signals/               # Archived signals by year/month
-│   └── archive/               # Backup files
+│   ├── signals/               # Archived signals by year/month/week
+│   └── market_intel/          # Cached market data
 └── frontend/
     ├── src/
     │   ├── app/
@@ -341,14 +372,14 @@ D:\Main project\files\
     │   │   ├── live-trades/page.tsx
     │   │   ├── trade-history/page.tsx
     │   │   ├── analytics/page.tsx
-    │   │   └── backtest/page.tsx
+    │   │   ├── backtest/page.tsx
+    │   │   └── market-intel/page.tsx
     │   ├── lib/
     │   │   ├── api.ts         # API client & interfaces
-    │   │   └── utils.ts       # calculateRR, formatPrice
+    │   │   └── utils.ts       # calculateRR, formatPrice, cn
     │   └── components/
     │       ├── dashboard-layout.tsx
-    │       ├── sidebar.tsx
-    │       └── ui/            # shadcn components
+    │       └── sidebar.tsx
     ├── next.config.ts         # Next.js config with API proxy
     └── package.json
 ```
@@ -391,6 +422,9 @@ D:\Main project\files\
 - Pydantic (data validation)
 - pandas, numpy (data processing)
 - requests (Binance API)
+- websockets (Binance WebSocket for price monitoring)
+- schedule (task scheduling)
+- python-dotenv (environment config)
 
 ### Frontend
 - Next.js 16.2.7
@@ -400,6 +434,7 @@ D:\Main project\files\
 - shadcn/ui components
 - recharts (charts)
 - lucide-react (icons)
+- next-themes (light/dark theme)
 
 ---
 
@@ -419,8 +454,12 @@ D:\Main project\files\
 
 7. **Frontend uses proxy** via `next.config.ts` rewrite rule: `/api/*` → `http://localhost:8001/api/*`
 
-8. **PNL is shown with 10x leverage** on the Live Trades page.
+8. **PNL is shown in R-multiples** on the Live Trades page (not leveraged).
 
 9. **Cache busting** is enabled via headers in `api.ts` to prevent stale data.
 
 10. **Signal data structure** includes both `status` (current state) and `outcome` (final result). For partial trades, `outcome` may be "PARTIAL" while `status` is TP1/TP2/TP3.
+
+11. **Market regime filter** is active in live trading. BTC 4H trend determines allowed directions: BULL=LONGs only, BEAR=SHORTs only, NEUTRAL=no trades.
+
+12. **Quality score filter** is currently disabled in live trading (commented out in `main.py`) to allow more signals through.

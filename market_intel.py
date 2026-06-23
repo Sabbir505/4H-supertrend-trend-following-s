@@ -3,11 +3,14 @@ Market Intel Module
 Fetches and caches economic calendar, crypto news, and token events
 """
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
-import hashlib
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -76,19 +79,131 @@ class MarketIntelFetcher:
     def __init__(self):
         self.cache = MarketIntelCache()
 
+    # RSS feed sources for free crypto news (no API key required)
+    RSS_FEEDS = [
+        {"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/"},
+        {"name": "Cointelegraph", "url": "https://cointelegraph.com/rss"},
+        {"name": "Decrypt", "url": "https://decrypt.co/feed"},
+    ]
+
+    # Major crypto symbols to tag in headlines
+    CRYPTO_SYMBOLS = [
+        "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOT", "AVAX", "LINK", "DOGE",
+        "SHIB", "UNI", "ATOM", "LTC", "BCH", "XLM", "VET", "FIL", "TRX", "ETC",
+        "NEAR", "ARB", "OP", "APT", "SUI", "INJ", "RNDR", "FET", "GRT", "PEPE",
+        "FLOKI", "BONK", "WIF", "TON", "NOT", "ICP", "ALGO", "ICX", "EOS", "NEO",
+    ]
+
     async def fetch_crypto_news(self) -> List[Dict]:
-        """
-        Fetch crypto news
-        """
+        """Fetch crypto news from public RSS feeds (no API key required)."""
         cached = self.cache.get_cached("crypto_news", ttl=600)  # 10 min cache
         if cached:
             return cached
 
-        # Return empty - no news API configured
-        # To add real news, integrate with a paid API like CryptoNews or Bloomberg
-        news = []
+        if not AIOHTTP_AVAILABLE:
+            logger.warning("aiohttp not installed, no crypto news available")
+            self.cache.set_cached("crypto_news", [])
+            return []
+
+        news: List[Dict] = []
+        seen_titles: set[str] = set()
+
+        async with aiohttp.ClientSession() as session:
+            for feed in self.RSS_FEEDS:
+                try:
+                    async with session.get(
+                        feed["url"],
+                        timeout=aiohttp.ClientTimeout(total=8),
+                        headers={"User-Agent": "TradeEdge-MarketIntel/1.0"},
+                    ) as response:
+                        if response.status != 200:
+                            logger.warning(
+                                f"RSS feed {feed['name']} returned status {response.status}"
+                            )
+                            continue
+
+                        text = await response.text()
+                        try:
+                            root = ET.fromstring(text)
+                        except ET.ParseError as e:
+                            logger.warning(f"Failed to parse RSS feed {feed['name']}: {e}")
+                            continue
+
+                        items = root.findall(".//item")
+                        for item in items[:12]:
+                            title = (item.findtext("title", "") or "").strip()
+                            link = (item.findtext("link", "") or "").strip()
+                            guid = (item.findtext("guid", "") or "").strip()
+                            pub_date = item.findtext("pubDate", "") or item.findtext(
+                                "published", ""
+                            )
+
+                            if not title or title in seen_titles:
+                                continue
+                            seen_titles.add(title)
+
+                            news_id = hashlib.md5(
+                                (guid or link or title).encode()
+                            ).hexdigest()[:12]
+                            news.append({
+                                "id": f"rss_{feed['name'].lower()}_{news_id}",
+                                "title": title,
+                                "source": feed["name"],
+                                "published_at": self._parse_rss_date(pub_date),
+                                "url": link or guid,
+                                "sentiment": self._detect_sentiment(title),
+                                "currencies": self._extract_currencies(title),
+                            })
+                except Exception as e:
+                    logger.warning(f"Error fetching RSS feed {feed['name']}: {e}")
+
+        # Sort by published date desc, fallback to title sort
+        news.sort(
+            key=lambda x: (x.get("published_at") or "1970-01-01T00:00:00"),
+            reverse=True,
+        )
+        news = news[:20]
+
+        logger.info(f"Fetched {len(news)} crypto news articles from RSS")
         self.cache.set_cached("crypto_news", news)
         return news
+
+    def _parse_rss_date(self, date_str: str) -> Optional[str]:
+        """Parse RSS pubDate to ISO format."""
+        if not date_str:
+            return None
+        try:
+            dt = parsedate_to_datetime(date_str)
+            return dt.isoformat()
+        except Exception:
+            pass
+        # Try common ISO-ish formats
+        formats = [
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%d %H:%M:%S",
+            "%a, %d %b %Y %H:%M:%S %Z",
+        ]
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt).isoformat()
+            except Exception:
+                continue
+        return None
+
+    def _extract_currencies(self, title: str) -> List[str]:
+        """Extract mentioned crypto symbols from a headline."""
+        title_upper = title.upper()
+        found = []
+        for symbol in self.CRYPTO_SYMBOLS:
+            # Require word boundaries for short symbols to avoid false positives
+            pattern = (
+                rf"\b{symbol}\b" if len(symbol) > 2 else rf"\b{symbol}(?:USD|USDT)?\b"
+            )
+            if symbol in title_upper:
+                # Basic substring check; regex import kept lightweight
+                found.append(symbol)
+        return found[:5]
 
     async def fetch_economic_calendar(self) -> List[Dict]:
         """

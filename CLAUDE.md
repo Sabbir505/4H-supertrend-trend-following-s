@@ -158,7 +158,15 @@ Modifying `signals.json` requires restarting the API server to pick up changes.
 ### Backend (Python)
 - `api_server.py` - FastAPI server
 - `signals.py` - Signal generation
+- `scanner.py` - Market scanner
+- `tracker.py` - Position tracking + WebSocket monitoring
+- `telegram_bot.py` - Telegram notifications
+- `reporter.py` - Performance reports
+- `market_intel.py` - Economic calendar, news, token events
 - `backtest.py` - Backtesting
+- `backtest_directional.py` - Directional strategy
+- `backtest_macro_events.py` - Macro event analysis
+- `backtest_trading_hours.py` - Trading hours analysis
 - `config.py` - Configuration
 
 ### Frontend (TypeScript/React)
@@ -168,10 +176,13 @@ Modifying `signals.json` requires restarting the API server to pick up changes.
 - `frontend/src/app/live-trades/page.tsx` - Live trades
 - `frontend/src/app/trade-history/page.tsx` - History
 - `frontend/src/app/analytics/page.tsx` - Analytics
+- `frontend/src/app/backtest/page.tsx` - Backtest
+- `frontend/src/app/market-intel/page.tsx` - Market intel
 
 ### Data
 - `signals.json` - Signal database
 - `data/signals/YYYY/MM/*.json` - Archived signals
+- `data/market_intel/` - Cached market data
 
 ---
 
@@ -200,7 +211,11 @@ curl -s http://localhost:8001/api/signals/closed
 
 ## Notes
 
-- PNL on Live Trades page shows **10x leveraged** values
+- PNL on Live Trades page shows **R-multiples** (not leveraged values)
 - Cache-busting headers are set in `api.ts` to prevent stale data
 - The frontend auto-refetches every 30 seconds
 - Signal data includes both `status` (current state) and `outcome` (final result)
+- Market regime filter is active: BULL=LONGs only, BEAR=SHORTs only, NEUTRAL=no trades
+- Quality score filter is currently DISABLED in live trading (commented out in `main.py`)
+- WebSocket monitoring runs for all open positions with REST fallback every 5 minutes
+- Signals are archived to `data/signals/YYYY/MM/week_XX.json` weekly

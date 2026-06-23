@@ -34,7 +34,12 @@ logger = logging.getLogger(__name__)
 # Enable CORS for Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://*.netlify.app",
+        "https://*.railway.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,7 +100,7 @@ class Signal(BaseModel):
     quality_score: float
     fired_at: str
     status: str
-    outcome: Optional[str] = None
+    outcome: Optional[str] = None  # WIN | LOSS | PARTIAL | BREAKEVEN | EXPIRED
     closed_at: Optional[str] = None
     max_rr_hit: Optional[float] = None
     tp1_hit: bool = False
@@ -241,8 +246,13 @@ class ImpactCorrelation(BaseModel):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def load_signals() -> list:
-    """Load signals from signals.json (source of truth), fallback to data directory for historical"""
-    # Primary source: signals.json (current active signals)
+    """Load signals from data/signals/ directory (priority), fallback to signals.json"""
+    # Primary source: data directory (archived signals by year/month/week)
+    data_signals = load_signals_from_data_dir()
+    if data_signals:
+        return data_signals
+
+    # Fallback: signals.json (legacy flat file)
     if SIGNALS_FILE.exists():
         try:
             with open(SIGNALS_FILE, 'r', encoding='utf-8') as f:
@@ -252,8 +262,7 @@ def load_signals() -> list:
         except Exception as e:
             logger.warning(f"Failed to read signals.json: {e}")
 
-    # Fallback: data directory (for historical data if signals.json missing)
-    return load_signals_from_data_dir()
+    return []
 
 
 def load_backtest_results() -> list:
@@ -288,17 +297,6 @@ def format_time_ago(fired_at_str: str) -> str:
         return "unknown"
 
 
-def calculate_pnl(signal: dict) -> Optional[float]:
-    """Calculate approximate P&L for open signals"""
-    if signal.get('status') != 'OPEN':
-        return None
-    # For open signals, we can't know current price without fetching it
-    # Return None and let frontend handle it
-    return None
-
-
-# ─── API Endpoints ────────────────────────────────────────────────────────────
-
 @app.get("/")
 async def root():
     return {"message": "TradeEdge API", "version": "1.0.0"}
@@ -324,9 +322,9 @@ async def get_open_signals():
 
 @app.get("/api/signals/closed", response_model=List[Signal])
 async def get_closed_signals():
-    """Get all fully closed signals (trade history) — only TP4, SL, BREAKEVEN, EXPIRED, WIN"""
+    """Get all closed signals (trade history) — includes partial TP hits TP1-TP3 and fully closed TP4, SL, BREAKEVEN, EXPIRED, WIN"""
     signals = load_signals()
-    closed_statuses = ['TP4', 'SL', 'BREAKEVEN', 'EXPIRED', 'WIN']
+    closed_statuses = ['TP1', 'TP2', 'TP3', 'TP4', 'SL', 'BREAKEVEN', 'EXPIRED', 'WIN']
     closed = [s for s in signals if s.get('status') in closed_statuses]
     return closed
 
@@ -385,7 +383,7 @@ async def get_dashboard_stats():
 
     # Win rate from fully closed signals only (excludes open partials TP1/TP2/TP3)
     closed = [s for s in signals if s.get('status') in closed_statuses_list]
-    wins = len([s for s in closed if s.get('status') in ('TP4', 'WIN')])
+    wins = len([s for s in closed if s.get('status') in ('TP1', 'TP2', 'TP3', 'TP4', 'WIN')])
     losses = len([s for s in closed if s.get('status') == 'SL'])
     win_rate = round(wins / (wins + losses) * 100, 2) if (wins + losses) > 0 else 0.0
 

@@ -12,6 +12,7 @@ The dashboard serves as the central command center for:
 - Reviewing trade history and outcomes
 - Analyzing performance metrics (win rate, RR, direction, strength)
 - Running backtests on historical data
+- Viewing market intelligence (economic calendar, crypto news, token events)
 
 ## Brand Personality
 
@@ -21,7 +22,6 @@ Professional, precise, data-driven. The interface should feel like a premium tra
 
 - No bright, playful colors (this is a serious trading tool)
 - No cluttered, information-dense layouts without hierarchy
-- No light theme (traders prefer dark mode for long sessions)
 - No generic bootstrap-style components
 
 ## Accessibility

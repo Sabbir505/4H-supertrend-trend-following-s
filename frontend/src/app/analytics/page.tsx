@@ -40,6 +40,23 @@ const outcomeColors: Record<string, string> = {
   EXPIRED: "var(--chart-5)",
 };
 
+function formatPeriodLabel(period: string, grouping: "daily" | "monthly" | "yearly") {
+  if (grouping === "daily") {
+    return new Date(period).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  }
+  if (grouping === "monthly") {
+    const [year, month] = period.split("-");
+    return new Date(Number(year), Number(month) - 1).toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+    });
+  }
+  return period;
+}
+
 function StatCard({
   title,
   value,
@@ -69,6 +86,7 @@ export default function AnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
   const [filterDirection, setFilterDirection] = useState("ALL");
   const [filterSymbol, setFilterSymbol] = useState("ALL");
+  const [timeGrouping, setTimeGrouping] = useState<"daily" | "monthly" | "yearly">("monthly");
 
   useEffect(() => {
     let isMounted = true;
@@ -81,8 +99,8 @@ export default function AnalyticsPage() {
         ]);
         if (!isMounted) return;
 
-        // Filter out OPEN and partial (TP1/TP2/TP3) signals for analytics — only fully closed trades
-        const closedStatuses = ["TP4", "SL", "BREAKEVEN", "EXPIRED", "WIN"];
+        // Include all non-OPEN signals for analytics — partial TP hits have realized RR
+        const closedStatuses = ["TP1", "TP2", "TP3", "TP4", "SL", "BREAKEVEN", "EXPIRED", "WIN"];
         const nonOpen = allSignals.filter((s: Signal) => closedStatuses.includes(s.status));
         setSignals(nonOpen);
         setAnalytics(analyticsData);
@@ -195,26 +213,38 @@ export default function AnalyticsPage() {
     }));
   }, [filteredSignals]);
 
-  // Time analysis: signals by day of week
-  const dayOfWeekData = useMemo(() => {
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const counts: Record<string, { total: number; wins: number; losses: number }> = {};
-    days.forEach((d) => (counts[d] = { total: 0, wins: 0, losses: 0 }));
+  // Time-based performance (daily / monthly / yearly)
+  const timeData = useMemo(() => {
+    const grouped: Record<string, { total: number; wins: number; losses: number; rr: number }> = {};
     filteredSignals.forEach((s) => {
       try {
-        const day = days[new Date(s.fired_at).getDay()];
-        counts[day].total++;
-        if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)) counts[day].wins++;
-        if (s.status === "SL") counts[day].losses++;
+        const date = new Date(s.fired_at);
+        let key: string;
+        if (timeGrouping === "daily") {
+          key = date.toISOString().split("T")[0];
+        } else if (timeGrouping === "monthly") {
+          key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        } else {
+          key = String(date.getFullYear());
+        }
+        if (!grouped[key]) grouped[key] = { total: 0, wins: 0, losses: 0, rr: 0 };
+        grouped[key].total++;
+        if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)) grouped[key].wins++;
+        if (s.status === "SL") grouped[key].losses++;
+        grouped[key].rr += calculateRR(s);
       } catch {}
     });
-    return days.map((day) => ({
-      day,
-      total: counts[day].total,
-      wins: counts[day].wins,
-      winRate: (counts[day].wins + counts[day].losses) > 0 ? parseFloat(((counts[day].wins / (counts[day].wins + counts[day].losses)) * 100).toFixed(1)) : 0,
-    }));
-  }, [filteredSignals]);
+    return Object.entries(grouped)
+      .map(([period, data]) => ({
+        period,
+        total: data.total,
+        wins: data.wins,
+        losses: data.losses,
+        winRate: (data.wins + data.losses) > 0 ? parseFloat(((data.wins / (data.wins + data.losses)) * 100).toFixed(1)) : 0,
+        rr: parseFloat(data.rr.toFixed(2)),
+      }))
+      .sort((a, b) => a.period.localeCompare(b.period));
+  }, [filteredSignals, timeGrouping]);
 
   // Stats
   const totalTrades = filteredSignals.length;
@@ -297,6 +327,16 @@ export default function AnalyticsPage() {
                   {s === "ALL" ? "All Symbols" : s}
                 </option>
               ))}
+            </select>
+            {/* Time grouping */}
+            <select
+              value={timeGrouping}
+              onChange={(e) => setTimeGrouping(e.target.value as "daily" | "monthly" | "yearly")}
+              className="bg-muted border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="daily">Daily</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
             </select>
           </div>
         </div>
@@ -466,37 +506,74 @@ export default function AnalyticsPage() {
             </CardContent>
           </Card>
 
-          {/* Day of Week Analysis */}
+          {/* Performance by Period */}
           <Card className="">
             <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <h3 className="text-sm font-semibold text-foreground">Performance by Day</h3>
-                <Info className="w-3.5 h-3.5 text-muted-foreground" />
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Performance by {timeGrouping.charAt(0).toUpperCase() + timeGrouping.slice(1)}
+                  </h3>
+                  <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+                <span className="text-xs text-muted-foreground capitalize">{timeGrouping} view</span>
               </div>
-              <ResponsiveContainer width="100%" height={220} minHeight={200}>
-                <BarChart data={dayOfWeekData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="day" stroke="var(--muted-foreground)" fontSize={12} />
-                  <YAxis stroke="var(--muted-foreground)" fontSize={12} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
-                    labelStyle={{ color: "var(--popover-foreground)" }}
+              {timeData.length === 0 ? (
+                <div className="flex items-center justify-center h-64 text-muted-foreground">No data</div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-muted-foreground">
+                      {timeData.length} period{timeData.length !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {filteredSignals.length} closed trades
+                    </span>
+                  </div>
+                  <ResponsiveContainer width="100%" height={220} minHeight={200}>
+                    <BarChart data={timeData} key={timeGrouping}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis
+                        dataKey="period"
+                        stroke="var(--muted-foreground)"
+                        fontSize={11}
+                        tickFormatter={(value) => formatPeriodLabel(value, timeGrouping)}
+                      />
+                      <YAxis stroke="var(--muted-foreground)" fontSize={12} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: "var(--popover)", border: "1px solid var(--border)", borderRadius: "8px" }}
+                        labelStyle={{ color: "var(--popover-foreground)" }}
                         itemStyle={{ color: "var(--popover-foreground)" }}
-                  />
-                  <Bar dataKey="wins" fill="var(--chart-1)" name="Wins" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="total" fill="var(--muted)" name="Total" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-              <div className="flex items-center justify-center gap-4 mt-2">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-emerald-500" />
-                  <span className="text-xs text-muted-foreground">Wins</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-muted" />
-                  <span className="text-xs text-muted-foreground">Total</span>
-                </div>
-              </div>
+                        labelFormatter={(value) => formatPeriodLabel(value as string, timeGrouping)}
+                      />
+                      <Bar dataKey="wins" fill="var(--chart-1)" name="Wins" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="losses" fill="var(--chart-4)" name="Losses" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="mt-3 space-y-1.5 max-h-[160px] overflow-y-auto" key={`list-${timeGrouping}`}>
+                    {timeData.map((d) => (
+                      <div key={d.period} className="flex items-center justify-between bg-muted/50 rounded px-3 py-2">
+                        <div>
+                          <p className="text-xs font-medium text-foreground">
+                            {formatPeriodLabel(d.period, timeGrouping)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {d.wins}W / {d.losses}L
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-xs font-bold ${d.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+                            {d.winRate}%
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {d.total} trades | {d.rr >= 0 ? "+" : ""}{d.rr}R
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
