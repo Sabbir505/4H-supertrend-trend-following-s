@@ -1,11 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "export",
   images: {
     unoptimized: true,
   },
-  // Disable API rewrites in production (handled by Netlify)
-  // Keep them for local development
+  trailingSlash: true,
   async rewrites() {
     return [
       {
@@ -14,8 +14,6 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // Ensure trailing slash handling
-  trailingSlash: false,
 };
 
 export default nextConfig;
