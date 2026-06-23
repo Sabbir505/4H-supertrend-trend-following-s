@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import {
   Calendar,
   Newspaper,
@@ -11,7 +12,7 @@ import {
   ExternalLink,
   Clock,
   RefreshCw,
-  ChevronDown,
+  ChevronLeft,
   ChevronRight,
   X,
   Filter,
@@ -134,9 +135,12 @@ export default function MarketIntelPage() {
   const [selectedImpacts, setSelectedImpacts] = useState<Set<string>>(
     new Set(["HIGH", "MEDIUM"])
   );
-  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [dismissedAlert, setDismissedAlert] = useState<string | null>(null);
   const [newsFilter, setNewsFilter] = useState<"all" | "high-impact">("all");
+
+  // macOS Calendar state
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -170,16 +174,62 @@ export default function MarketIntelPage() {
     [calendar, selectedImpacts]
   );
 
-  // Group calendar by date
-  const calendarByDate = useMemo(() => {
+  // Group calendar events by date string
+  const eventsByDate = useMemo(() => {
     const grouped: Record<string, EconomicEvent[]> = {};
     filteredCalendar.forEach((event) => {
-      const date = new Date(event.timestamp).toDateString();
-      if (!grouped[date]) grouped[date] = [];
-      grouped[date].push(event);
+      const dateKey = new Date(event.timestamp).toDateString();
+      if (!grouped[dateKey]) grouped[dateKey] = [];
+      grouped[dateKey].push(event);
     });
     return grouped;
   }, [filteredCalendar]);
+
+  // Calendar grid helpers
+  const getDaysInMonth = (year: number, month: number) =>
+    new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (year: number, month: number) =>
+    new Date(year, month, 1).getDay();
+
+  const calendarDays = useMemo(() => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const daysInMonth = getDaysInMonth(year, month);
+    const firstDay = getFirstDayOfMonth(year, month);
+    const days: { date: Date; padding: boolean }[] = [];
+
+    const prevMonthDays = getDaysInMonth(year, month - 1);
+    for (let i = firstDay - 1; i >= 0; i--) {
+      days.push({
+        date: new Date(year, month - 1, prevMonthDays - i),
+        padding: true,
+      });
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push({ date: new Date(year, month, i), padding: false });
+    }
+    const remaining = 42 - days.length;
+    for (let i = 1; i <= remaining; i++) {
+      days.push({ date: new Date(year, month + 1, i), padding: true });
+    }
+    return days;
+  }, [currentMonth]);
+
+  const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  // Auto-select today if it has events, otherwise first event date
+  useEffect(() => {
+    if (selectedDate) return;
+    const today = new Date().toDateString();
+    if (eventsByDate[today]?.length > 0) {
+      setSelectedDate(today);
+    } else {
+      const firstDate = Object.keys(eventsByDate)[0];
+      if (firstDate) setSelectedDate(firstDate);
+    }
+  }, [eventsByDate, selectedDate]);
+
+  const selectedEvents = selectedDate ? eventsByDate[selectedDate] || [] : [];
 
   // Filter news
   const filteredNews = useMemo(() => {
@@ -188,26 +238,6 @@ export default function MarketIntelPage() {
     }
     return news.slice(0, 8);
   }, [news, newsFilter]);
-
-  // Auto-expand today
-  useEffect(() => {
-    const dates = Object.keys(calendarByDate);
-    if (dates.length > 0) {
-      const today = new Date().toDateString();
-      const defaultExpanded = dates.find((d) => d === today) || dates[0];
-      setExpandedDates((prev) =>
-        prev.size === 0 ? new Set([defaultExpanded]) : prev
-      );
-    }
-  }, [calendarByDate]);
-
-  const toggleDate = (date: string) => {
-    setExpandedDates((prev) => {
-      const next = new Set(prev);
-      next.has(date) ? next.delete(date) : next.add(date);
-      return next;
-    });
-  };
 
   const toggleImpact = (impact: string) => {
     setSelectedImpacts((prev) => {
@@ -375,168 +405,256 @@ export default function MarketIntelPage() {
           <div className="xl:col-span-2 space-y-4">
             <Card className="bg-card border-border overflow-hidden">
               <CardHeader className="border-b border-border bg-card py-3">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-emerald-400" />
-                  <CardTitle className="text-sm font-semibold text-foreground">
-                    Economic Calendar
-                  </CardTitle>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-emerald-400" />
+                    <CardTitle className="text-sm font-semibold text-foreground">
+                      Economic Calendar
+                    </CardTitle>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() =>
+                        setCurrentMonth(
+                          new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
+                        )
+                      }
+                      className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setCurrentMonth(new Date())}
+                      className="px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+                    >
+                      Today
+                    </button>
+                    <button
+                      onClick={() =>
+                        setCurrentMonth(
+                          new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)
+                        )
+                      }
+                      className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                {/* Table Header */}
-                <div className="grid grid-cols-[80px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2 bg-muted border-b border-border text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                  <div>Time</div>
-                  <div>Curr</div>
-                  <div>Event</div>
-                  <div className="text-center">Imp</div>
-                  <div className="text-right">Act</div>
-                  <div className="text-right">Fore</div>
-                  <div className="text-right">Prev</div>
-                </div>
+                {/* macOS-style Calendar */}
+                <div className="p-4">
+                  {/* Month / Year header */}
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-foreground">
+                      {currentMonth.toLocaleDateString("en-US", {
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </h2>
+                    <span className="text-xs text-muted-foreground">
+                      {filteredCalendar.length} events
+                    </span>
+                  </div>
 
-                {/* Table Body */}
-                <div className="max-h-[480px] overflow-y-auto">
-                  {Object.entries(calendarByDate).length === 0 ? (
-                    <div className="p-8 text-center text-muted-foreground text-sm">
-                      No events match filters
-                    </div>
-                  ) : (
-                    Object.entries(calendarByDate).map(([date, events]) => {
-                      const isExpanded = expandedDates.has(date);
-                      const isToday =
-                        new Date(date).toDateString() === new Date().toDateString();
+                  {/* Weekday headers */}
+                  <div className="grid grid-cols-7 mb-2">
+                    {weekDays.map((day) => (
+                      <div
+                        key={day}
+                        className="text-center text-[11px] font-medium text-muted-foreground py-1"
+                      >
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Calendar grid */}
+                  <div className="grid grid-cols-7 gap-px bg-border rounded-lg border border-border overflow-hidden">
+                    {calendarDays.map(({ date, padding }, idx) => {
+                      const dateKey = date.toDateString();
+                      const isToday = dateKey === new Date().toDateString();
+                      const isSelected = selectedDate === dateKey;
+                      const dayEvents = eventsByDate[dateKey] || [];
+                      const hasHigh = dayEvents.some((e) => e.impact === "HIGH");
+                      const hasMedium = dayEvents.some((e) => e.impact === "MEDIUM");
+                      const hasLow = dayEvents.some((e) => e.impact === "LOW");
+
                       return (
-                        <div key={date}>
-                          {/* Date Header */}
-                          <button
-                            onClick={() => toggleDate(date)}
-                            className={`w-full flex items-center gap-2 px-4 py-2 border-b border-border hover:bg-muted transition-colors ${
-                              isToday ? "bg-muted/50" : "bg-card"
-                            }`}
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-                            )}
+                        <button
+                          key={idx}
+                          onClick={() => setSelectedDate(dateKey)}
+                          className={cn(
+                            "min-h-[80px] p-1.5 text-left flex flex-col justify-between transition-colors",
+                            padding
+                              ? "bg-muted/30 text-muted-foreground/50"
+                              : "bg-card hover:bg-muted/50 text-foreground"
+                          )}
+                        >
+                          <div className="flex items-start justify-between">
                             <span
-                              className={`text-xs font-semibold ${
-                                isToday ? "text-foreground" : "text-foreground/80"
-                              }`}
+                              className={cn(
+                                "text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full",
+                                isToday
+                                  ? "bg-emerald-500 text-white"
+                                  : isSelected && !padding
+                                  ? "bg-primary text-primary-foreground"
+                                  : ""
+                              )}
                             >
-                              {formatDate(date)}
+                              {date.getDate()}
                             </span>
-                            {isToday && (
-                              <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[9px] rounded font-medium">
-                                TODAY
+                            {dayEvents.length > 0 && (
+                              <span className="text-[9px] text-muted-foreground">
+                                {dayEvents.length}
                               </span>
                             )}
-                            <span className="text-[11px] text-muted-foreground/70">
-                              {events.length}
-                            </span>
-                          </button>
+                          </div>
 
-                          {/* Event Rows */}
-                          {isExpanded &&
-                            events.map((event) => {
-                              const cfg =
-                                impactConfig[event.impact as keyof typeof impactConfig];
-                              const affectsMe = uniqueAlerts.some(
-                                (a) => a.event_id === event.id
-                              );
-                              return (
-                                <div
-                                  key={event.id}
-                                  className={`grid grid-cols-[80px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2.5 border-b border-border/30 hover:bg-muted/30 transition-colors items-center ${
-                                    event.impact === "HIGH"
-                                      ? "bg-rose-500/[0.03]"
-                                      : ""
-                                  }`}
-                                >
-                                  {/* Time */}
-                                  <div className="flex items-center gap-1.5">
-                                    {event.impact === "HIGH" && (
-                                      <div className="w-1 h-4 bg-rose-500 rounded-full" />
-                                    )}
-                                    <span
-                                      className={`text-[11px] tabular-nums ${
-                                        event.impact === "HIGH"
-                                          ? "text-foreground font-medium"
-                                          : "text-muted-foreground"
-                                      }`}
-                                    >
-                                      {formatTime(event.timestamp)}
-                                    </span>
-                                  </div>
-
-                                  {/* Currency */}
-                                  <span
-                                    className={`text-[10px] font-bold text-center ${
-                                      event.currency === "USD"
-                                        ? "text-blue-400"
-                                        : event.currency === "EUR"
-                                        ? "text-indigo-400"
-                                        : "text-muted-foreground"
-                                    }`}
-                                  >
-                                    {event.currency}
-                                  </span>
-
-                                  {/* Event Name */}
-                                  <div className="flex items-center gap-1.5 min-w-0">
-                                    <span
-                                      className={`text-xs truncate ${
-                                        event.impact === "HIGH"
-                                          ? "text-foreground font-medium"
-                                          : "text-foreground/90"
-                                      }`}
-                                    >
-                                      {event.title}
-                                    </span>
-                                    {affectsMe && (
-                                      <div
-                                        className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
-                                        title="Affects your positions"
-                                      />
-                                    )}
-                                  </div>
-
-                                  {/* Impact */}
-                                  <div className="flex justify-center">
-                                    <ImpactBars impact={event.impact} />
-                                  </div>
-
-                                  {/* Actual */}
-                                  <div className="text-right">
-                                    <span
-                                      className={`text-[11px] font-mono tabular-nums ${
-                                        event.actual ? "text-foreground" : "text-muted-foreground/70"
-                                      }`}
-                                    >
-                                      {event.actual || "—"}
-                                    </span>
-                                  </div>
-
-                                  {/* Forecast */}
-                                  <div className="text-right">
-                                    <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
-                                      {event.forecast || "—"}
-                                    </span>
-                                  </div>
-
-                                  {/* Previous */}
-                                  <div className="text-right">
-                                    <span className="text-[11px] font-mono tabular-nums text-muted-foreground/70">
-                                      {event.previous || "—"}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
+                          {/* Event indicators */}
+                          {!padding && dayEvents.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1 content-end">
+                              {hasHigh && (
+                                <div className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                              )}
+                              {hasMedium && (
+                                <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                              )}
+                              {hasLow && (
+                                <div className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                              )}
+                              {dayEvents.length > 3 && (
+                                <span className="text-[8px] text-muted-foreground leading-none">
+                                  +{dayEvents.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </button>
                       );
-                    })
-                  )}
+                    })}
+                  </div>
+                </div>
+
+                {/* Selected day event list */}
+                <div className="border-t border-border bg-card">
+                  <div className="px-4 py-2 border-b border-border bg-muted/50 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground">
+                      {selectedDate ? formatDate(selectedDate) : "Select a date"}
+                    </span>
+                    {selectedDate && (
+                      <span className="text-[11px] text-muted-foreground">
+                        {selectedEvents.length} event{selectedEvents.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="max-h-[280px] overflow-y-auto">
+                    {selectedEvents.length === 0 ? (
+                      <div className="p-6 text-center text-muted-foreground text-sm">
+                        {selectedDate
+                          ? "No events on this date"
+                          : "Select a date to view events"}
+                      </div>
+                    ) : (
+                      selectedEvents.map((event) => {
+                        const cfg =
+                          impactConfig[event.impact as keyof typeof impactConfig];
+                        const affectsMe = uniqueAlerts.some(
+                          (a) => a.event_id === event.id
+                        );
+                        return (
+                          <div
+                            key={event.id}
+                            className={`grid grid-cols-[70px_50px_1fr_50px_70px_70px_70px] gap-2 px-4 py-2.5 border-b border-border/30 hover:bg-muted/30 transition-colors items-center ${
+                              event.impact === "HIGH" ? "bg-rose-500/[0.03]" : ""
+                            }`}
+                          >
+                            {/* Time */}
+                            <div className="flex items-center gap-1.5">
+                              {event.impact === "HIGH" && (
+                                <div className="w-1 h-4 bg-rose-500 rounded-full" />
+                              )}
+                              <span
+                                className={`text-[11px] tabular-nums ${
+                                  event.impact === "HIGH"
+                                    ? "text-foreground font-medium"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {formatTime(event.timestamp)}
+                              </span>
+                            </div>
+
+                            {/* Currency */}
+                            <span
+                              className={`text-[10px] font-bold text-center ${
+                                event.currency === "USD"
+                                  ? "text-blue-400"
+                                  : event.currency === "EUR"
+                                  ? "text-indigo-400"
+                                  : "text-muted-foreground"
+                              }`}
+                            >
+                              {event.currency}
+                            </span>
+
+                            {/* Event Name */}
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span
+                                className={`text-xs truncate ${
+                                  event.impact === "HIGH"
+                                    ? "text-foreground font-medium"
+                                    : "text-foreground/90"
+                                }`}
+                              >
+                                {event.title}
+                              </span>
+                              {affectsMe && (
+                                <div
+                                  className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+                                  title="Affects your positions"
+                                />
+                              )}
+                            </div>
+
+                            {/* Impact */}
+                            <div className="flex justify-center">
+                              <ImpactBars impact={event.impact} />
+                            </div>
+
+                            {/* Actual */}
+                            <div className="text-right">
+                              <span
+                                className={`text-[11px] font-mono tabular-nums ${
+                                  event.actual
+                                    ? "text-foreground"
+                                    : "text-muted-foreground/70"
+                                }`}
+                              >
+                                {event.actual || "—"}
+                              </span>
+                            </div>
+
+                            {/* Forecast */}
+                            <div className="text-right">
+                              <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
+                                {event.forecast || "—"}
+                              </span>
+                            </div>
+
+                            {/* Previous */}
+                            <div className="text-right">
+                              <span className="text-[11px] font-mono tabular-nums text-muted-foreground/70">
+                                {event.previous || "—"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -616,14 +734,14 @@ export default function MarketIntelPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Newspaper className="w-4 h-4 text-blue-400" />
-                    <CardTitle className="text-sm font-semibold text-foreground">
+                    <CardTitle className="text-base font-semibold text-foreground">
                       Latest News
                     </CardTitle>
                   </div>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setNewsFilter("all")}
-                      className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
+                      className={`px-2.5 py-1 rounded text-xs transition-colors ${
                         newsFilter === "all"
                           ? "bg-muted text-foreground"
                           : "text-muted-foreground hover:text-foreground/80"
@@ -633,7 +751,7 @@ export default function MarketIntelPage() {
                     </button>
                     <button
                       onClick={() => setNewsFilter("high-impact")}
-                      className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
+                      className={`px-2.5 py-1 rounded text-xs transition-colors ${
                         newsFilter === "high-impact"
                           ? "bg-amber-500/20 text-amber-400"
                           : "text-muted-foreground hover:text-foreground/80"
@@ -655,15 +773,15 @@ export default function MarketIntelPage() {
                       {filteredNews.map((item) => (
                         <div
                           key={item.id}
-                          className="p-3 hover:bg-muted/30 transition-colors"
+                          className="p-4 hover:bg-muted/30 transition-colors"
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <h4 className="text-xs text-foreground/90 leading-snug line-clamp-2 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <h4 className="text-sm text-foreground/90 leading-snug line-clamp-2 flex-1">
                               {item.title}
                             </h4>
                             {item.sentiment && (
                               <span
-                                className={`text-xs font-bold flex-shrink-0 ${
+                                className={`text-sm font-bold flex-shrink-0 ${
                                   item.sentiment === "positive"
                                     ? "text-emerald-400"
                                     : item.sentiment === "negative"
@@ -679,21 +797,21 @@ export default function MarketIntelPage() {
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <span className="text-[10px] text-muted-foreground font-medium uppercase">
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className="text-xs text-muted-foreground font-medium uppercase">
                               {item.source}
                             </span>
-                            <span className="text-[10px] text-muted-foreground/70">·</span>
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="text-xs text-muted-foreground/70">·</span>
+                            <span className="text-xs text-muted-foreground">
                               {formatTimeAgo(item.published_at)}
                             </span>
                           </div>
                           {item.currencies.length > 0 && (
-                            <div className="flex items-center gap-1 mt-1.5">
+                            <div className="flex items-center gap-1.5 mt-2">
                               {item.currencies.slice(0, 3).map((c) => (
                                 <span
                                   key={c}
-                                  className="text-[9px] text-muted-foreground bg-muted px-1 py-0.5 rounded"
+                                  className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded"
                                 >
                                   {c}
                                 </span>
@@ -705,9 +823,9 @@ export default function MarketIntelPage() {
                               href={item.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 mt-2 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                              className="inline-flex items-center gap-1 mt-3 text-xs text-blue-400 hover:text-blue-300 transition-colors"
                             >
-                              Read <ExternalLink className="w-2.5 h-2.5" />
+                              Read <ExternalLink className="w-3 h-3" />
                             </a>
                           )}
                         </div>

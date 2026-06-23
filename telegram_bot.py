@@ -167,6 +167,41 @@ class TelegramBot:
         )
         return msg
 
+    def send_ema_crossover_alert(self, alert: dict) -> bool:
+        """Send informational EMA crossover alert (not a trade signal)."""
+        symbol = alert['symbol']
+        crossover_type = alert['crossover_type']
+        price = alert['price']
+        ema_fast = alert['ema_fast']
+        ema_slow = alert['ema_slow']
+        interval = alert.get('interval', '4h')
+
+        if crossover_type == 'GOLDEN_CROSS':
+            emoji = '\U0001f7e2'  # Green circle
+            direction = 'BULLISH CROSS'
+            description = f"{symbol} is crossing above the EMA"
+        else:
+            emoji = '\U0001f534'  # Red circle
+            direction = 'BEARISH CROSS'
+            description = f"{symbol} is crossing below the EMA"
+
+        msg = (
+            f"<b>{emoji} EMA Crossover Alert</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"\n"
+            f"<b>{symbol}</b> | {direction}\n"
+            f"{description}\n"
+            f"\n"
+            f"Price: <code>{price}</code>\n"
+            f"EMA{alert.get('ema_fast_period', 21)}: <code>{ema_fast}</code>\n"
+            f"EMA{alert.get('ema_slow_period', 55)}: <code>{ema_slow}</code>\n"
+            f"Timeframe: {interval.upper()}\n"
+            f"\n"
+            f"<i>This is for informational purposes only. Not a trade signal.</i>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        return self.send_message(msg, parse_mode='HTML')
+
     def send_startup_message(self):
         msg = """\U0001f680 <b>Crypto Signal Bot Started</b>
 

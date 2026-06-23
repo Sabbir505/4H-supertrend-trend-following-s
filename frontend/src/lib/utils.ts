@@ -13,7 +13,7 @@ export function cn(...inputs: ClassValue[]) {
  * RR calculation rules:
  * - SL: -1R (full loss)
  * - EXPIRED: 0R
- * - BREAKEVEN: 40% at TP1 (rr1 * 0.4), remaining at breakeven = rr1 * 0.4
+ * - BREAKEVEN: weighted sum of hit TPs only (check tp1_hit, tp2_hit, etc.)
  * - TP1: 40% at TP1 = rr1 * 0.4
  * - TP2: 40% at TP1 + 30% at TP2 = rr1 * 0.4 + rr2 * 0.3
  * - TP3: 40% at TP1 + 30% at TP2 + 20% at TP3 = rr1 * 0.4 + rr2 * 0.3 + rr3 * 0.2
