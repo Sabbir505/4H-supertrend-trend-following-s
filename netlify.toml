@@ -1,6 +1,6 @@
 [build]
   base = "frontend"
-  publish = ".next"
+  publish = "dist"
   command = "npm run build"
 
 [build.environment]
