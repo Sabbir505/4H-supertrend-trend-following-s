@@ -1,3 +1,5 @@
+// For static export, API calls are relative (same origin proxy)
+// In development, calls go to localhost:8001 via next.config rewrites
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 // Default timeout for API requests (ms)
