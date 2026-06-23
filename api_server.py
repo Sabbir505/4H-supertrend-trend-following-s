@@ -40,6 +40,7 @@ app.add_middleware(
         "https://*.netlify.app",
         "https://*.railway.app",
         "https://stellar-sorbet-b0f512.netlify.app",
+        "https://algo-testing-phase.netlify.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
