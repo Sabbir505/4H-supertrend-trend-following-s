@@ -16,6 +16,7 @@ interface TradeDisplay {
   entryPrice: number;
   currentPrice: number | null;
   slPrice: number;
+  sl_original?: number;
   tp1Price: number;
   tp2Price: number;
   tp3Price: number;
@@ -327,7 +328,8 @@ export default function LiveTradesPage() {
           const isLong = trade.direction === "LONG";
           const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
           // Use sl_original if available (for trades that hit TP and moved SL to breakeven)
-          const slPrice = trade.sl_original || trade.sl;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const slPrice = (trade as any).sl_original || trade.slPrice;
           const slDistance = Math.abs(trade.entryPrice - slPrice);
           return {
             ...trade,
