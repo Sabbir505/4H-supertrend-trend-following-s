@@ -419,15 +419,24 @@ def run_bot_only():
             time.sleep(60)
 
 
-# ─── FastAPI Startup Event ────────────────────────────────────────────────────
+# ─── FastAPI Lifespan Event Handler ───────────────────────────────────────────
 
-@fastapi_app.on_event("startup")
-async def startup_event():
-    """Start the bot scheduler in a background thread when FastAPI starts."""
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    """Start the bot scheduler when FastAPI starts."""
     logger.info("FastAPI starting up — launching bot scheduler thread...")
     bot_thread = threading.Thread(target=bot_scheduler_loop, daemon=True)
     bot_thread.start()
     logger.info("Bot scheduler thread started successfully")
+    yield
+    # Shutdown logic (if needed)
+    logger.info("FastAPI shutting down...")
+
+
+# Apply lifespan to the FastAPI app
+fastapi_app.router.lifespan_context = lifespan
 
 
 # ─── Main Entry Point ─────────────────────────────────────────────────────────
