@@ -358,6 +358,67 @@ def bot_scheduler_loop():
             time.sleep(60)
 
 
+def run_bot_only():
+    """Run the bot without FastAPI (for Railway without web server)."""
+    logger.info("=" * 50)
+    logger.info("  CRYPTO SIGNAL BOT v2.0 — Bot Only Mode")
+    logger.info("=" * 50)
+
+    if not config.validate():
+        logger.error("Config validation failed. Check your environment variables.")
+        return
+
+    # Initialize win predictor
+    global win_predictor
+    if WIN_PREDICTOR_AVAILABLE:
+        try:
+            win_predictor = WinPredictor()
+            logger.info("Win Predictor initialized successfully")
+        except Exception as e:
+            logger.warning(f"Win Predictor initialization failed: {e}")
+            win_predictor = None
+    else:
+        logger.info("Win Predictor not available")
+
+    # Log filter configuration
+    min_quality = getattr(config, 'min_quality_score', 50)
+    min_win_prob = getattr(config, 'min_win_probability', 0.55)
+    logger.info(f"Filter Configuration:")
+    logger.info(f"  - Min Quality Score: {min_quality}")
+    logger.info(f"  - Min Win Probability: {min_win_prob}")
+    logger.info(f"  - Trading Hours Filter: Enabled")
+    logger.info(f"  - Market Regime Filter: Enabled")
+    logger.info(f"  - Symbol Win Rate Filter: {'Enabled' if hasattr(tracker, 'should_skip_symbol') else 'Disabled'}")
+    logger.info(f"  - Win Predictor: {'Enabled' if win_predictor else 'Disabled'}")
+
+    # Start WebSocket price monitor
+    tracker.start_ws_monitor()
+
+    run_startup()
+    telegram.send_startup_message()
+
+    # Schedule tasks
+    schedule.every().hour.at(":05").do(run_1h_scan)
+
+    for hour in [0, 4, 8, 12, 16, 20]:
+        schedule.every().day.at(f"{hour:02d}:02").do(run_4h_scan)
+        schedule.every().day.at(f"{hour:02d}:04").do(run_4h_ema_crossover_scan)
+
+    schedule.every(5).minutes.do(run_monitor)
+    schedule.every().day.at("00:05").do(reporter.send_daily_report)
+    schedule.every().monday.at("00:10").do(reporter.send_weekly_report)
+
+    logger.info("Scheduler active. Watching the market...\n")
+
+    while True:
+        try:
+            schedule.run_pending()
+            time.sleep(30)
+        except Exception as e:
+            logger.error(f"Scheduler error: {e}")
+            time.sleep(60)
+
+
 # ─── FastAPI Startup Event ────────────────────────────────────────────────────
 
 @fastapi_app.on_event("startup")
@@ -372,6 +433,13 @@ async def startup_event():
 # ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8001))
-    logger.info(f"Starting TradeEdge server on port {port}...")
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=port)
+    # Check if running in Railway (PORT env var set)
+    # If no PORT, run bot-only mode (no web server)
+    port = os.getenv("PORT")
+    if port is None:
+        logger.info("No PORT environment variable found — running bot in standalone mode")
+        run_bot_only()
+    else:
+        port = int(port)
+        logger.info(f"PORT found — starting TradeEdge server on port {port}")
+        uvicorn.run(fastapi_app, host="0.0.0.0", port=port)

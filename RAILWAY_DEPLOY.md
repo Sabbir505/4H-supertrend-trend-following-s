@@ -105,16 +105,34 @@ In Railway Dashboard → Your Project → Variables, add these:
 
 > **Note**: The `.env` file is NOT committed to GitHub. You MUST set these in Railway Dashboard.
 
-### Step 4: Add a Volume (Persistent Storage)
+### Step 4: Add a Volume (Persistent Storage) — Optional
 
-Your bot writes signal data to `data/signals/`. On Railway, you need a volume for persistence:
+Your bot writes signal data to `data/signals/`. On Railway, you can add a volume for persistence, but **the free tier only gives you 0.5GB**.
 
-1. Railway Dashboard → Your Service → **Volumes**
-2. Click **"New Volume"**
-3. Mount path: `/app/data`
-4. Size: 1GB (minimum)
+**Option A: Add a Volume (if available in your plan)**
 
-Then update your code to use `/app/data` as the data directory (already configured in `railway_server.py` if needed).
+1. Railway Dashboard → Your Service → **Settings** tab
+2. Scroll down to **Volume** section
+3. Click **"Add Volume"**
+4. Mount path: `/app/data`
+5. Size: `0.5` GB (max on free/trial)
+
+> ⚠️ **Note:** On the free plan, you may only see **CPU and Memory** sliders under **Scale**. The Volume option may require upgrading to Hobby ($5/month). If you don't see Volume, use Option B below.
+
+**Option B: No Volume (Data resets on redeploy)**
+
+If you can't add a volume, your data will be lost when Railway restarts your service. This is okay for testing, but for production you should either:
+- Upgrade to Hobby plan ($5/month) to get volume support
+- Use an external database (PostgreSQL free tier on Railway or Render)
+- Accept that signal history resets on each deploy
+
+**Option C: Use Railway's Built-in Database (Recommended for production)**
+
+1. Railway Dashboard → Your Project → **New** → **Database**
+2. Select **PostgreSQL** or **MySQL**
+3. Railway auto-generates the connection string
+4. Add `DATABASE_URL` to your environment variables
+5. Modify your code to store signals in the database instead of JSON files
 
 ### Step 5: Deploy Frontend to Netlify
 
@@ -193,9 +211,15 @@ Response: `{"message": "TradeEdge API", "version": "1.0.0"}`
 - Check CORS settings in `api_server.py`
 
 ### Data not persisting?
-- Make sure you added a Volume in Railway
-- Verify the volume is mounted at the correct path
-- Check that the app has write permissions
+- Check if you added a Volume in Railway (requires Hobby plan or higher)
+- If on free plan, data resets on each deploy — this is expected behavior
+- Consider upgrading to Hobby ($5/month) for volume support
+- Or use an external database (PostgreSQL free tier)
+
+### Volume option not visible?
+- The **Volume** option requires Hobby plan ($5/month) or higher
+- Free/trial plans only show **CPU** and **Memory** sliders under **Scale**
+- Upgrade to Hobby to unlock volumes, or use the database approach (Option C above)
 
 ### High memory usage?
 - Railway free tier has 512MB RAM
@@ -229,8 +253,23 @@ git push origin main
 1. ✅ Deploy backend to Railway
 2. ✅ Deploy frontend to Netlify
 3. ✅ Set environment variables
-4. ✅ Add persistent volume
+4. ✅ Add persistent volume (if on Hobby plan)
 5. 🔄 Monitor and optimize
+
+## Important Notes
+
+### Free Plan Limitations
+- **No persistent volume** — data resets on each deploy/restart
+- **CPU/Memory sliders only** — no Volume tab on free plan
+- **0.5GB storage** — limited space for data files
+- **Hobby plan ($5/month)** — unlocks volumes, more storage, priority support
+
+### Recommendation
+For a trading bot that needs to keep signal history, consider upgrading to **Hobby plan** after the free trial. The $5/month gets you:
+- Persistent volumes (signal data survives restarts)
+- More CPU/memory
+- Priority support
+- No data loss on deploys
 
 ## Support
 
