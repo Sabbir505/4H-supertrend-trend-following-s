@@ -230,18 +230,10 @@ export async function getClosedSignals(): Promise<Signal[]> {
   return fetchAPI<Signal[]>('/api/signals/closed');
 }
 
-export async function getSignalById(id: string): Promise<Signal> {
-  return fetchAPI<Signal>(`/api/signals/${id}`);
-}
-
 // ─── Backtest Endpoints ───────────────────────────────────────────────────────
 
 export async function getBacktestResults(): Promise<BacktestResult[]> {
   return fetchAPI<BacktestResult[]>('/api/backtest');
-}
-
-export async function getBacktestForSymbol(symbol: string): Promise<BacktestResult> {
-  return fetchAPI<BacktestResult>(`/api/backtest/${symbol}`);
 }
 
 // ─── Dashboard Endpoints ────────────────────────────────────────────────────────

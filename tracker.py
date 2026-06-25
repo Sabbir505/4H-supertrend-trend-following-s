@@ -19,36 +19,17 @@ logger = logging.getLogger(__name__)
 SIGNALS_FILE = "signals.json"
 DATA_DIR = "data/signals"
 
-# TP Position Closing Percentages (must sum to 100%)
-# 4-TP system: Close 40% at TP1, 30% at TP2, 20% at TP3, 10% at TP4
-TP_CLOSE_PERCENTAGES = {
-    'tp1': 0.40,
-    'tp2': 0.30,
-    'tp3': 0.20,
-    'tp4': 0.10,
-}
-
-# Cumulative percentages for RR calculation
-TP_RR_WEIGHTS = {
-    'tp1': 0.40,                    # 40% at TP1
-    'tp2': 0.70,                   # 40% at TP1 + 30% at TP2
-    'tp3': 0.90,                   # 40% + 30% + 20% = 90%
-    'tp4': 1.00,                   # 100% closed
-}
-
-# Position remaining after each TP
-TP_REMAINING = {
-    'tp1': 0.60,   # After TP1: 60% remaining
-    'tp2': 0.30,   # After TP2: 30% remaining
-    'tp3': 0.10,   # After TP3: 10% remaining
-    'tp4': 0.00,   # After TP4: 0% remaining
-}
-
-
 class SignalTracker:
-    def __init__(self, config, telegram):
+    def __init__(self, config, telegram, trader=None):
         self.config = config
         self.telegram = telegram
+        self.trader = trader
+        self.tp_close_pct = {
+            'tp1': getattr(config, 'tp1_close_pct', 0.40),
+            'tp2': getattr(config, 'tp2_close_pct', 0.30),
+            'tp3': getattr(config, 'tp3_close_pct', 0.20),
+            'tp4': getattr(config, 'tp4_close_pct', 0.10),
+        }
         self.base_url = config.binance_base_url
         self.signals = self._load()
         self.cooldown = {}  # {symbol: datetime} — skip scanning until this time
@@ -254,33 +235,45 @@ class SignalTracker:
             logger.error(f"WS message handler error: {e}")
 
     def _evaluate_open_signals_locked(self):
-        """Evaluate all open signals using cached prices. Must be called with _ws_lock held."""
+        """Evaluate all open signals using cached prices. Must be called with _ws_lock held.
+
+        PF4 fix: Collect price snapshots under lock, then release lock before
+        running _evaluate() which may trigger HTTP calls (close_partial,
+        move_sl_to_breakeven) with 10s timeouts.
+        """
         open_signals = [s for s in self.signals if s['status'] in ('OPEN', 'TP1', 'TP2', 'TP3')]
         if not open_signals:
             return
 
-        # Throttle evaluation INFO logs to once every 5 minutes to avoid noisy output
         now = time.time()
         if now - self._last_eval_log > 300:
             logger.info(f"WebSocket evaluating {len(open_signals)} open signal(s) against {len(self._price_cache)} cached prices")
             self._last_eval_log = now
-        changed = False
-        for sig in open_signals:
-            price = self._price_cache.get(sig['symbol'])
-            if price is None:
-                logger.debug(f"  No cached price for {sig['symbol']}, skipping")
-                continue
-            logger.debug(f"  Checking {sig['symbol']}: current={price}, entry={sig['entry']}, SL={sig['sl']}, TP1={sig['tp1']}")
-            try:
-                self._evaluate(sig, price)
-                # Check if status changed (signal closed)
-                if sig['status'] in ('SL', 'TP4', 'BREAKEVEN', 'EXPIRED', 'WIN'):
-                    changed = True
-            except Exception as e:
-                logger.warning(f"WS eval error for {sig.get('id')}: {e}")
 
-        if changed:
-            self._save()
+        # Snapshot prices while holding lock
+        price_snapshot = {sig['symbol']: self._price_cache.get(sig['symbol']) for sig in open_signals}
+
+        # Release lock before evaluation (which may trigger HTTP calls)
+        self._ws_lock.release()
+        try:
+            changed = False
+            for sig in open_signals:
+                price = price_snapshot.get(sig['symbol'])
+                if price is None:
+                    logger.debug(f"  No cached price for {sig['symbol']}, skipping")
+                    continue
+                logger.debug(f"  Checking {sig['symbol']}: current={price}, entry={sig['entry']}, SL={sig['sl']}, TP1={sig['tp1']}")
+                try:
+                    self._evaluate(sig, price)
+                    if sig['status'] in ('SL', 'TP4', 'BREAKEVEN', 'EXPIRED', 'WIN'):
+                        changed = True
+                except Exception as e:
+                    logger.warning(f"WS eval error for {sig.get('id')}: {e}")
+
+            if changed:
+                self._save()
+        finally:
+            self._ws_lock.acquire()
 
     def is_ws_connected(self) -> bool:
         """Check if WebSocket is currently active."""
@@ -421,6 +414,11 @@ class SignalTracker:
             # Track which TPs were hit for incremental closing
             'tps_hit': [],  # List of TP levels hit: ['tp1', 'tp2', 'tp3', 'tp4']
             'position_remaining': 1.00,  # 100% position remaining at start
+            # Binance auto-trade metadata (populated when auto-trading is enabled)
+            'futures_symbol': signal.get('futures_symbol'),
+            'entry_quantity': signal.get('entry_quantity'),
+            'binance_entry_order_id': signal.get('binance_entry_order_id'),
+            'binance_sl_order_id': signal.get('binance_sl_order_id'),
         }
         self.signals.append(record)
         self._save()
@@ -558,7 +556,6 @@ class SignalTracker:
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
                 self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: Breakeven exit triggered at {price}")
@@ -570,7 +567,6 @@ class SignalTracker:
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
                 self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: Breakeven exit triggered at {price}")
@@ -581,7 +577,7 @@ class SignalTracker:
             sig['status'] = 'EXPIRED'
             sig['outcome'] = 'EXPIRED'
             sig['closed_at'] = datetime.now(timezone.utc).isoformat()
-            self._send_outcome(sig, price)
+            self._execute_full_close(sig)
             self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
             self._save()
             return
@@ -600,7 +596,6 @@ class SignalTracker:
                     sig['max_rr_hit'] = -1
                 sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
                 self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 return
@@ -618,13 +613,15 @@ class SignalTracker:
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
+                self._execute_full_close(sig)
                 self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: TP4 hit at {price}")
                 return
 
             elif not sig.get('tp3_hit') and price >= sig['tp3']:
+                tp1_skipped = not sig.get('tp1_hit')
+                tp2_skipped = not sig.get('tp2_hit')
                 sig['tp3_hit'] = True
                 sig['tp2_hit'] = True
                 sig['tp1_hit'] = True
@@ -634,11 +631,20 @@ class SignalTracker:
                 sig['position_remaining'] = 0.10
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
+                if tp1_skipped:
+                    self._execute_tp_close(sig, 'tp1')
+                if tp2_skipped:
+                    self._execute_tp_close(sig, 'tp2')
+                self._execute_tp_close(sig, 'tp3')
+                if not sig.get('sl_at_breakeven'):
+                    sig['sl'] = sig['entry']
+                    sig['sl_at_breakeven'] = True
+                    self._execute_sl_to_breakeven(sig)
                 self._save()
-                logger.info(f"{sig['symbol']} TP3 hit (20% closed), watching TP4...")
+                logger.info(f"{sig['symbol']} TP3 hit (90% closed), watching TP4...")
 
             elif not sig.get('tp2_hit') and price >= sig['tp2']:
+                tp1_skipped = not sig.get('tp1_hit')
                 sig['tp2_hit'] = True
                 sig['tp1_hit'] = True
                 sig['status'] = 'TP2'
@@ -647,9 +653,15 @@ class SignalTracker:
                 sig['position_remaining'] = 0.30
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
+                if tp1_skipped:
+                    self._execute_tp_close(sig, 'tp1')
+                self._execute_tp_close(sig, 'tp2')
+                if not sig.get('sl_at_breakeven'):
+                    sig['sl'] = sig['entry']
+                    sig['sl_at_breakeven'] = True
+                    self._execute_sl_to_breakeven(sig)
                 self._save()
-                logger.info(f"{sig['symbol']} TP2 hit (30% closed), watching TP3...")
+                logger.info(f"{sig['symbol']} TP2 hit (70% closed), watching TP3...")
 
             elif not sig.get('tp1_hit') and price >= sig['tp1']:
                 sig['tp1_hit'] = True
@@ -663,7 +675,8 @@ class SignalTracker:
                 sig['sl'] = sig['entry']
                 sig['sl_at_breakeven'] = True
                 logger.info(f"{sig['symbol']} TP1 hit (40% closed), SL moved to breakeven {sig['entry']}")
-                self._send_outcome(sig, price)
+                self._execute_tp_close(sig, 'tp1')
+                self._execute_sl_to_breakeven(sig)
                 self._save()
 
         else:  # SHORT
@@ -680,7 +693,6 @@ class SignalTracker:
                     sig['max_rr_hit'] = -1
                 sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
                 self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: SL hit at {price}")
@@ -698,13 +710,15 @@ class SignalTracker:
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['closed_at'] = datetime.now(timezone.utc).isoformat()
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
+                self._execute_full_close(sig)
                 self.cooldown[sig['symbol']] = datetime.now(timezone.utc) + timedelta(hours=4)
                 self._save()
                 logger.info(f"{sig['symbol']}: TP4 hit at {price}")
                 return
 
             elif not sig.get('tp3_hit') and price <= sig['tp3']:
+                tp1_skipped = not sig.get('tp1_hit')
+                tp2_skipped = not sig.get('tp2_hit')
                 sig['tp3_hit'] = True
                 sig['tp2_hit'] = True
                 sig['tp1_hit'] = True
@@ -714,11 +728,20 @@ class SignalTracker:
                 sig['position_remaining'] = 0.10
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
+                if tp1_skipped:
+                    self._execute_tp_close(sig, 'tp1')
+                if tp2_skipped:
+                    self._execute_tp_close(sig, 'tp2')
+                self._execute_tp_close(sig, 'tp3')
+                if not sig.get('sl_at_breakeven'):
+                    sig['sl'] = sig['entry']
+                    sig['sl_at_breakeven'] = True
+                    self._execute_sl_to_breakeven(sig)
                 self._save()
-                logger.info(f"{sig['symbol']} TP3 hit (20% closed), watching TP4...")
+                logger.info(f"{sig['symbol']} TP3 hit (90% closed), watching TP4...")
 
             elif not sig.get('tp2_hit') and price <= sig['tp2']:
+                tp1_skipped = not sig.get('tp1_hit')
                 sig['tp2_hit'] = True
                 sig['tp1_hit'] = True
                 sig['status'] = 'TP2'
@@ -727,9 +750,15 @@ class SignalTracker:
                 sig['position_remaining'] = 0.30
                 sig['max_rr_hit'] = self._calculate_blended_rr(sig)
                 sig['minutes_to_close'] = round(minutes_open)
-                self._send_outcome(sig, price)
+                if tp1_skipped:
+                    self._execute_tp_close(sig, 'tp1')
+                self._execute_tp_close(sig, 'tp2')
+                if not sig.get('sl_at_breakeven'):
+                    sig['sl'] = sig['entry']
+                    sig['sl_at_breakeven'] = True
+                    self._execute_sl_to_breakeven(sig)
                 self._save()
-                logger.info(f"{sig['symbol']} TP2 hit (30% closed), watching TP3...")
+                logger.info(f"{sig['symbol']} TP2 hit (70% closed), watching TP3...")
 
             elif not sig.get('tp1_hit') and price <= sig['tp1']:
                 sig['tp1_hit'] = True
@@ -742,14 +771,65 @@ class SignalTracker:
                 sig['sl'] = sig['entry']
                 sig['sl_at_breakeven'] = True
                 logger.info(f"{sig['symbol']} TP1 hit (40% closed), SL moved to breakeven {sig['entry']}")
-                self._send_outcome(sig, price)
+                self._execute_tp_close(sig, 'tp1')
+                self._execute_sl_to_breakeven(sig)
                 self._save()
 
-    # ─── Outcome Alert ────────────────────────────────────────────────────────
+    # ─── Binance Auto-Trade Helpers ──────────────────────────────────────────
 
-    def _send_outcome(self, sig: dict, current_price: float):
-        # Outcome alerts disabled - only Cornix signals are sent to Telegram
-        pass
+    def _execute_tp_close(self, sig: dict, tp_level: str):
+        """Close partial position on Binance when a TP level is hit."""
+        if self.trader is None or not sig.get('futures_symbol'):
+            return
+
+        close_pct = self.tp_close_pct.get(tp_level, 0)
+        entry_qty = sig.get('entry_quantity', 0)
+        if not entry_qty or close_pct <= 0:
+            return
+
+        qty = entry_qty * close_pct
+        futures_sym = sig['futures_symbol']
+        try:
+            qty = self.trader.round_quantity(futures_sym, qty)
+            if qty > 0:
+                self.trader.close_partial(futures_sym, qty, sig['direction'])
+                logger.info(
+                    f"Binance: closed {close_pct*100:.0f}% of {futures_sym} "
+                    f"at {tp_level.upper()} (qty={qty})"
+                )
+        except Exception as e:
+            logger.error(f"Binance partial close failed for {futures_sym} {tp_level}: {e}")
+
+    def _execute_sl_to_breakeven(self, sig: dict):
+        """Move SL to breakeven on Binance after any TP hit."""
+        if self.trader is None or not sig.get('futures_symbol'):
+            return
+
+        futures_sym = sig['futures_symbol']
+        entry_price = sig.get('actual_entry_price', sig['entry'])
+        sl_order_id = sig.get('binance_sl_order_id')
+        try:
+            result = self.trader.move_sl_to_breakeven(
+                futures_sym, entry_price, sig['direction'],
+                sl_order_id=sl_order_id
+            )
+            if result:
+                sig['binance_sl_order_id'] = result.get('orderId')
+            logger.info(f"Binance: SL moved to breakeven for {futures_sym}")
+        except Exception as e:
+            logger.error(f"Binance SL-to-breakeven failed for {futures_sym}: {e}")
+
+    def _execute_full_close(self, sig: dict):
+        """Close any remaining position and cancel orders on Binance."""
+        if self.trader is None or not sig.get('futures_symbol'):
+            return
+
+        futures_sym = sig['futures_symbol']
+        try:
+            self.trader.close_position(futures_sym)
+            logger.info(f"Binance: full close for {futures_sym}")
+        except Exception as e:
+            logger.error(f"Binance full close failed for {futures_sym}: {e}")
 
     # ─── Symbol-Specific Statistics ─────────────────────────────────────────
 
@@ -785,13 +865,47 @@ class SignalTracker:
             return True
         return False
 
-    def get_worst_symbols(self, min_trades: int = 5, limit: int = 5) -> list:
-        """Return symbols with lowest win rates"""
-        symbols = set(s['symbol'] for s in self.signals)
-        stats = []
-        for sym in symbols:
-            s = self.get_symbol_stats(sym, lookback=20)
-            if s['total'] >= min_trades:
-                stats.append({'symbol': sym, **s})
+    # ─── Reconciliation ───────────────────────────────────────────────────────
 
-        return sorted(stats, key=lambda x: x['win_rate'])[:limit]
+    def reconcile_positions(self):
+        """Log comparison of tracked open signals vs actual Binance positions.
+
+        Call on startup to detect drift after bot restart/crash.
+        """
+        if self.trader is None:
+            logger.info("Reconciliation skipped: no trader configured")
+            return
+
+        open_statuses = ('OPEN', 'TP1', 'TP2', 'TP3')
+        tracked = [
+            s for s in self.signals
+            if s.get('status') in open_statuses and s.get('futures_symbol')
+        ]
+        tracked_symbols = {s['futures_symbol'] for s in tracked}
+
+        try:
+            positions = self.trader.get_open_positions()
+        except Exception as e:
+            logger.error(f"Reconciliation failed: could not fetch positions: {e}")
+            return
+
+        binance_symbols = {
+            p['symbol'] for p in positions
+            if float(p.get('positionAmt', 0)) != 0
+        }
+
+        only_tracked = tracked_symbols - binance_symbols
+        only_binance = binance_symbols - tracked_symbols
+
+        if only_tracked:
+            logger.warning(
+                f"RECONCILE: tracked but NOT on Binance: {only_tracked}"
+            )
+        if only_binance:
+            logger.warning(
+                f"RECONCILE: on Binance but NOT tracked: {only_binance}"
+            )
+        if not only_tracked and not only_binance:
+            logger.info(
+                f"Reconciliation OK: {len(tracked_symbols)} positions match"
+            )

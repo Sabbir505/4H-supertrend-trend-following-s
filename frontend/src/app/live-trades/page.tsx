@@ -328,8 +328,7 @@ export default function LiveTradesPage() {
           const isLong = trade.direction === "LONG";
           const priceDiff = isLong ? currentPrice - trade.entryPrice : trade.entryPrice - currentPrice;
           // Use sl_original if available (for trades that hit TP and moved SL to breakeven)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const slPrice = (trade as any).sl_original || trade.slPrice;
+          const slPrice = trade.sl_original || trade.slPrice;
           const slDistance = Math.abs(trade.entryPrice - slPrice);
           return {
             ...trade,
@@ -633,7 +632,7 @@ export default function LiveTradesPage() {
                               </div>
                               {trade.pnl !== null && trade.pnlPercent !== null && (
                                 <div className="text-right">
-                                  <p className="text-xs text-muted-foreground">PNL (10x Leveraged)</p>
+                                  <p className="text-xs text-muted-foreground">PNL (R-multiple)</p>
                                   <p className={`text-lg font-bold ${trade.pnlPercent >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                                     {trade.pnlPercent >= 0 ? "+" : ""}{trade.pnlPercent.toFixed(2)}%
                                   </p>

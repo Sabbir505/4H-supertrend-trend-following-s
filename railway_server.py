@@ -26,6 +26,8 @@ from telegram_bot import TelegramBot
 from tracker import SignalTracker
 from reporter import PerformanceReporter
 from config import Config
+from binance_trader import BinanceTrader
+from risk_manager import RiskManager
 
 # Optional win predictor import
 try:
@@ -46,14 +48,26 @@ config = Config()
 scanner = CryptoScanner(config)
 signal_engine = SignalEngine()
 telegram = TelegramBot(config, scanner)
-tracker = SignalTracker(config, telegram)
+
+# Initialize Binance auto-trader (J4 fix: was missing entirely)
+trader = None
+risk_mgr = None
+if config.auto_trading_enabled and config.binance_api_key:
+    trader = BinanceTrader(config, scanner)
+    risk_mgr = RiskManager(config, trader)
+    logger.info("Binance auto-trading ENABLED (TRADE_AMOUNT=$%s, MAX_POS=%s)",
+                config.trade_amount_usdt, config.max_open_positions)
+else:
+    logger.info("Auto-trading disabled — signals sent to Telegram only")
+
+tracker = SignalTracker(config, telegram, trader=trader)
 reporter = PerformanceReporter(telegram)
 
 trend_bias = {}
 market_regime = 'NEUTRAL'
 win_predictor = None
 
-# ─── Bot Functions (from main.py) ───────────────────────────────────────────
+# ─── Bot Functions ────────────────────────────────────────────────────────────
 
 def detect_market_regime_from_btc():
     """Detect global market regime based on BTC 4H trend."""
@@ -88,20 +102,6 @@ def detect_market_regime_from_btc():
 
     except Exception as e:
         logger.error(f"Error detecting market regime: {e}")
-        return 'NEUTRAL'
-
-
-def get_market_regime(scanner, signal_engine):
-    """Fetch BTC 4H candles and use signal_engine.get_trend_bias()."""
-    try:
-        df = scanner.fetch_candles('BTCUSDT', '4h', limit=100)
-        if df is None or len(df) < 60:
-            logger.warning("Could not fetch BTC 4H data for regime detection")
-            return 'NEUTRAL'
-        bias = signal_engine.get_trend_bias(df)
-        return bias
-    except Exception as e:
-        logger.error(f"Error getting market regime: {e}")
         return 'NEUTRAL'
 
 
@@ -172,13 +172,58 @@ def run_4h_ema_crossover_scan():
     logger.info("=== 4H EMA CROSSOVER SCAN COMPLETE ===")
 
 
+def _auto_trade_signal(sig: dict):
+    """Execute auto-trade on Binance if enabled and risk checks pass.
+
+    J4 fix: This was completely missing from railway_server.py — signals were
+    logged and sent to Telegram but never placed on Binance.
+    """
+    if trader is None or risk_mgr is None:
+        return
+
+    allowed, reason = risk_mgr.can_open_trade()
+    if not allowed:
+        logger.info(f"Auto-trade skipped for {sig['symbol']}: {reason}")
+        return
+
+    valid, reason = risk_mgr.validate_signal(sig)
+    if not valid:
+        logger.warning(f"Signal validation failed for {sig['symbol']}: {reason}")
+        return
+
+    try:
+        result = trader.open_position(sig)
+        sig['futures_symbol'] = result['futures_symbol']
+        sig['entry_quantity'] = result['entry_quantity']
+        sig['binance_entry_order_id'] = result['entry_order_id']
+        sig['binance_sl_order_id'] = result['sl_order_id']
+        sig['actual_entry_price'] = result.get('actual_entry_price', sig['entry'])
+        logger.info(
+            f"Auto-trade opened: {sig['symbol']} "
+            f"({result['futures_symbol']}) qty={result['entry_quantity']}"
+        )
+        telegram.send_message(
+            f"<b>Auto-Trade Opened</b>\n"
+            f"{sig['symbol']} {sig['direction']}\n"
+            f"Qty: {result['entry_quantity']}\n"
+            f"Entry: {sig['entry']} | SL: {sig['sl']}",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Auto-trade FAILED for {sig['symbol']}: {e}")
+        telegram.send_message(
+            f"Auto-trade FAILED for {sig['symbol']}: {e}",
+            parse_mode=None
+        )
+
+
 def run_1h_scan():
     """Runs every 1H — checks 1H signals with all filters applied."""
     global market_regime
 
     logger.info("=== 1H SIGNAL SCAN STARTED ===")
 
-    market_regime = get_market_regime(scanner, signal_engine)
+    market_regime = detect_market_regime_from_btc()
     logger.info(f"Market Regime: {market_regime} (BULL=LONGs only, BEAR=SHORTs only, NEUTRAL=skip)")
 
     symbols = scanner.get_top_100_symbols()
@@ -219,10 +264,6 @@ def run_1h_scan():
                 continue
             if market_regime == 'NEUTRAL':
                 continue
-
-            # Quality score filter (disabled)
-            # if signal['quality_score'] < min_quality_score:
-            #     continue
 
             # Win probability filter
             predicted_win_prob = None
@@ -268,6 +309,7 @@ def run_1h_scan():
     for sig in strong_signals[:max_per_tier]:
         try:
             telegram.send_signal(sig)
+            _auto_trade_signal(sig)
             tracker.log_signal(sig)
             time.sleep(1)
         except Exception as e:
@@ -276,6 +318,7 @@ def run_1h_scan():
     for sig in standard_signals[:max_per_tier]:
         try:
             telegram.send_signal(sig)
+            _auto_trade_signal(sig)
             tracker.log_signal(sig)
             time.sleep(1)
         except Exception as e:
@@ -291,10 +334,65 @@ def run_monitor():
 
 def run_startup():
     logger.info("Bot starting — running initial scans...")
+    tracker.reconcile_positions()
     run_4h_scan()
     run_4h_ema_crossover_scan()
     run_1h_scan()
     logger.info("Startup complete. Scheduler running.")
+
+
+def _init_scheduler_common() -> bool:
+    """Shared initialization for both scheduler modes (A3 fix: deduplicated)."""
+    global win_predictor
+
+    if not config.validate():
+        logger.error("Config validation failed. Check your environment variables.")
+        return False
+
+    if WIN_PREDICTOR_AVAILABLE:
+        try:
+            win_predictor = WinPredictor()
+            logger.info("Win Predictor initialized successfully")
+        except Exception as e:
+            logger.warning(f"Win Predictor initialization failed: {e}")
+            win_predictor = None
+    else:
+        logger.info("Win Predictor not available")
+
+    logger.info("Filter Configuration:")
+    logger.info(f"  - Market Regime Filter: Enabled")
+    logger.info(f"  - Symbol Win Rate Filter: {'Enabled' if hasattr(tracker, 'should_skip_symbol') else 'Disabled'}")
+    logger.info(f"  - Win Predictor: {'Enabled' if win_predictor else 'Disabled'}")
+    logger.info(f"  - Auto-Trading: {'Enabled' if trader else 'Disabled'}")
+    if trader:
+        logger.info(f"    Trade Amount: ${config.trade_amount_usdt}")
+        logger.info(f"    Max Positions: {config.max_open_positions}")
+
+    tracker.start_ws_monitor()
+    run_startup()
+    telegram.send_startup_message()
+
+    schedule.every().hour.at(":05").do(run_1h_scan)
+    for hour in [0, 4, 8, 12, 16, 20]:
+        schedule.every().day.at(f"{hour:02d}:02").do(run_4h_scan)
+        schedule.every().day.at(f"{hour:02d}:04").do(run_4h_ema_crossover_scan)
+    schedule.every(5).minutes.do(run_monitor)
+    schedule.every().day.at("00:05").do(reporter.send_daily_report)
+    schedule.every().monday.at("00:10").do(reporter.send_weekly_report)
+
+    logger.info("Scheduler active. Watching the market...\n")
+    return True
+
+
+def _scheduler_loop():
+    """Run the schedule loop."""
+    while True:
+        try:
+            schedule.run_pending()
+            time.sleep(30)
+        except Exception as e:
+            logger.error(f"Scheduler error: {e}")
+            time.sleep(60)
 
 
 def bot_scheduler_loop():
@@ -302,60 +400,9 @@ def bot_scheduler_loop():
     logger.info("=" * 50)
     logger.info("  CRYPTO SIGNAL BOT v2.0 — Starting on Railway")
     logger.info("=" * 50)
-
-    if not config.validate():
-        logger.error("Config validation failed. Check your environment variables.")
+    if not _init_scheduler_common():
         return
-
-    # Initialize win predictor
-    global win_predictor
-    if WIN_PREDICTOR_AVAILABLE:
-        try:
-            win_predictor = WinPredictor()
-            logger.info("Win Predictor initialized successfully")
-        except Exception as e:
-            logger.warning(f"Win Predictor initialization failed: {e}")
-            win_predictor = None
-    else:
-        logger.info("Win Predictor not available")
-
-    # Log filter configuration
-    min_quality = getattr(config, 'min_quality_score', 50)
-    min_win_prob = getattr(config, 'min_win_probability', 0.55)
-    logger.info(f"Filter Configuration:")
-    logger.info(f"  - Min Quality Score: {min_quality}")
-    logger.info(f"  - Min Win Probability: {min_win_prob}")
-    logger.info(f"  - Trading Hours Filter: Enabled")
-    logger.info(f"  - Market Regime Filter: Enabled")
-    logger.info(f"  - Symbol Win Rate Filter: {'Enabled' if hasattr(tracker, 'should_skip_symbol') else 'Disabled'}")
-    logger.info(f"  - Win Predictor: {'Enabled' if win_predictor else 'Disabled'}")
-
-    # Start WebSocket price monitor
-    tracker.start_ws_monitor()
-
-    run_startup()
-    telegram.send_startup_message()
-
-    # Schedule tasks
-    schedule.every().hour.at(":05").do(run_1h_scan)
-
-    for hour in [0, 4, 8, 12, 16, 20]:
-        schedule.every().day.at(f"{hour:02d}:02").do(run_4h_scan)
-        schedule.every().day.at(f"{hour:02d}:04").do(run_4h_ema_crossover_scan)
-
-    schedule.every(5).minutes.do(run_monitor)
-    schedule.every().day.at("00:05").do(reporter.send_daily_report)
-    schedule.every().monday.at("00:10").do(reporter.send_weekly_report)
-
-    logger.info("Scheduler active. Watching the market...\n")
-
-    while True:
-        try:
-            schedule.run_pending()
-            time.sleep(30)
-        except Exception as e:
-            logger.error(f"Scheduler error: {e}")
-            time.sleep(60)
+    _scheduler_loop()
 
 
 def run_bot_only():
@@ -363,60 +410,9 @@ def run_bot_only():
     logger.info("=" * 50)
     logger.info("  CRYPTO SIGNAL BOT v2.0 — Bot Only Mode")
     logger.info("=" * 50)
-
-    if not config.validate():
-        logger.error("Config validation failed. Check your environment variables.")
+    if not _init_scheduler_common():
         return
-
-    # Initialize win predictor
-    global win_predictor
-    if WIN_PREDICTOR_AVAILABLE:
-        try:
-            win_predictor = WinPredictor()
-            logger.info("Win Predictor initialized successfully")
-        except Exception as e:
-            logger.warning(f"Win Predictor initialization failed: {e}")
-            win_predictor = None
-    else:
-        logger.info("Win Predictor not available")
-
-    # Log filter configuration
-    min_quality = getattr(config, 'min_quality_score', 50)
-    min_win_prob = getattr(config, 'min_win_probability', 0.55)
-    logger.info(f"Filter Configuration:")
-    logger.info(f"  - Min Quality Score: {min_quality}")
-    logger.info(f"  - Min Win Probability: {min_win_prob}")
-    logger.info(f"  - Trading Hours Filter: Enabled")
-    logger.info(f"  - Market Regime Filter: Enabled")
-    logger.info(f"  - Symbol Win Rate Filter: {'Enabled' if hasattr(tracker, 'should_skip_symbol') else 'Disabled'}")
-    logger.info(f"  - Win Predictor: {'Enabled' if win_predictor else 'Disabled'}")
-
-    # Start WebSocket price monitor
-    tracker.start_ws_monitor()
-
-    run_startup()
-    telegram.send_startup_message()
-
-    # Schedule tasks
-    schedule.every().hour.at(":05").do(run_1h_scan)
-
-    for hour in [0, 4, 8, 12, 16, 20]:
-        schedule.every().day.at(f"{hour:02d}:02").do(run_4h_scan)
-        schedule.every().day.at(f"{hour:02d}:04").do(run_4h_ema_crossover_scan)
-
-    schedule.every(5).minutes.do(run_monitor)
-    schedule.every().day.at("00:05").do(reporter.send_daily_report)
-    schedule.every().monday.at("00:10").do(reporter.send_weekly_report)
-
-    logger.info("Scheduler active. Watching the market...\n")
-
-    while True:
-        try:
-            schedule.run_pending()
-            time.sleep(30)
-        except Exception as e:
-            logger.error(f"Scheduler error: {e}")
-            time.sleep(60)
+    _scheduler_loop()
 
 
 # ─── FastAPI Lifespan Event Handler ───────────────────────────────────────────
@@ -431,7 +427,6 @@ async def lifespan(app):
     bot_thread.start()
     logger.info("Bot scheduler thread started successfully")
     yield
-    # Shutdown logic (if needed)
     logger.info("FastAPI shutting down...")
 
 
@@ -442,8 +437,6 @@ fastapi_app.router.lifespan_context = lifespan
 # ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Check if running in Railway (PORT env var set)
-    # If no PORT, run bot-only mode (no web server)
     port = os.getenv("PORT")
     if port is None:
         logger.info("No PORT environment variable found — running bot in standalone mode")

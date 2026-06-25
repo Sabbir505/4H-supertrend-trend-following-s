@@ -116,57 +116,6 @@ class TelegramBot:
         )
         return msg
 
-    def _format_human_signal(self, s: dict) -> str:
-        """Format signal for human readers with detailed analysis info"""
-        direction = s['direction']
-        strength = s['strength'] or 'STANDARD'
-
-        if direction == 'LONG':
-            dir_icon = '\U0001f7e2'
-            dir_label = 'LONG'
-            action = 'BUY / LONG'
-        else:
-            dir_icon = '\U0001f534'
-            dir_label = 'SHORT'
-            action = 'SELL / SHORT'
-
-        if strength == 'STRONG':
-            tier = '\U0001f525 STRONG (4H + 1H confirmed)'
-        else:
-            tier = '\U0001f50a STANDARD (1H only)'
-
-        rr1 = s['rr1']
-        rr2 = s.get('rr2', s['rr1'] * 1.33)
-        rr3 = s.get('rr3', s['rr1'] * 1.67)
-        rr_max = s['rr_max']
-        # 4-TP: Blended RR if all TPs hit: 40% at TP1 + 30% at TP2 + 20% at TP3 + 10% at TP4
-        blended_rr = round(rr1 * 0.40 + rr2 * 0.30 + rr3 * 0.20 + rr_max * 0.10, 2)
-
-        msg = (
-            f"<b>Signal Details</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"\n"
-            f"{dir_icon} <b>{s['symbol']}</b> | {dir_label}\n"
-            f"{tier}\n"
-            f"Action: <b>{action}</b>\n"
-            f"\n"
-            f"Entry: <code>{s['entry']}</code>\n"
-            f"Stop Loss: <code>{s['sl']}</code>\n"
-            f"TP1: <code>{s['tp1']}</code> (1:{rr1} RR, close 40%)\n"
-            f"TP2: <code>{s['tp2']}</code> (1:{rr2} RR, close 30%)\n"
-            f"TP3: <code>{s['tp3']}</code> (1:{rr3} RR, close 20%)\n"
-            f"TP4: <code>{s['tp4']}</code> (1:{rr_max} RR, close 10%)\n"
-            f"\n"
-            f"Blended RR (all TPs): 1:{blended_rr}\n"
-            f"SL moves to breakeven after TP1\n"
-            f"\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"RSI: {s['rsi']} | ADX: {s.get('adx', 'N/A')}\n"
-            f"Vol: {s['vol_ratio']}x | Score: {s['quality_score']}/100\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        return msg
-
     def send_ema_crossover_alert(self, alert: dict) -> bool:
         """Send informational EMA crossover alert (not a trade signal)."""
         symbol = alert['symbol']
