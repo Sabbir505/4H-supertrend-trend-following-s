@@ -814,7 +814,7 @@ class SignalTracker:
                 sl_order_id=sl_order_id
             )
             if result:
-                sig['binance_sl_order_id'] = result.get('orderId')
+                sig['binance_sl_order_id'] = result.get('algoId')
             logger.info(f"Binance: SL moved to breakeven for {futures_sym}")
         except Exception as e:
             logger.error(f"Binance SL-to-breakeven failed for {futures_sym}: {e}")

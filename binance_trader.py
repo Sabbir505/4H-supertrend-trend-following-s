@@ -280,20 +280,16 @@ class BinanceTrader:
             f"orderId={entry_order.get('orderId')}"
         )
 
-        # Place STOP_MARKET for SL (closes entire remaining position)
+        # Place STOP_MARKET for SL via Algo Order API (closes entire remaining position)
         sl_side = 'SELL' if direction == 'LONG' else 'BUY'
         sl_stop_price = self._round_price(futures_symbol, sl_price)
 
-        sl_order = self._request('POST', '/fapi/v1/order', {
-            'symbol': futures_symbol,
-            'side': sl_side,
-            'type': 'STOP_MARKET',
-            'closePosition': 'true',
-            'stopPrice': sl_stop_price,
-        })
+        sl_order = self._place_algo_stop(
+            futures_symbol, sl_side, sl_stop_price, close_position=True
+        )
         logger.info(
-            f"SL order: {futures_symbol} {sl_side} stop={sl_stop_price} "
-            f"orderId={sl_order.get('orderId')}"
+            f"SL algo order: {futures_symbol} {sl_side} trigger={sl_stop_price} "
+            f"algoId={sl_order.get('algoId')}"
         )
 
         return {
@@ -301,7 +297,7 @@ class BinanceTrader:
             'entry_order_id': entry_order.get('orderId'),
             'entry_quantity': quantity,
             'actual_entry_price': float(entry_order.get('avgPrice', entry_price)),
-            'sl_order_id': sl_order.get('orderId'),
+            'sl_order_id': sl_order.get('algoId'),
             'sl_price': sl_stop_price,
         }
 
@@ -333,7 +329,7 @@ class BinanceTrader:
         return order
 
     def cancel_order(self, symbol: str, order_id: int) -> dict:
-        """Cancel a specific order by ID."""
+        """Cancel a specific regular order by ID."""
         try:
             return self._request('DELETE', '/fapi/v1/order', {
                 'symbol': symbol,
@@ -343,32 +339,63 @@ class BinanceTrader:
             logger.warning(f"Cancel order {order_id} failed for {symbol}: {e}")
             return {}
 
+    def _place_algo_stop(self, symbol: str, side: str, trigger_price: float,
+                         close_position: bool = False,
+                         quantity: float = None) -> dict:
+        """Place a STOP_MARKET order via the Algo Order API.
+
+        Binance migrated conditional orders (STOP_MARKET, TAKE_PROFIT_MARKET)
+        to /fapi/v1/algoOrder as of Dec 2025. Error -4120 is returned if the
+        old /fapi/v1/order endpoint is used for these types.
+
+        Returns dict with 'algoId' key for order tracking/cancellation.
+        """
+        params = {
+            'algoType': 'CONDITIONAL',
+            'symbol': symbol,
+            'side': side,
+            'type': 'STOP_MARKET',
+            'triggerPrice': trigger_price,
+        }
+        if close_position:
+            params['closePosition'] = 'true'
+        elif quantity is not None:
+            params['quantity'] = quantity
+
+        return self._request('POST', '/fapi/v1/algoOrder', params)
+
+    def _cancel_algo_order(self, algo_id: int) -> dict:
+        """Cancel a specific algo order by algoId."""
+        try:
+            return self._request('DELETE', '/fapi/v1/algoOrder', {
+                'algoId': algo_id,
+            })
+        except BinanceAPIError as e:
+            logger.warning(f"Cancel algo order {algo_id} failed: {e}")
+            return {}
+
     def move_sl_to_breakeven(self, symbol: str, entry_price: float,
                              direction: str,
                              sl_order_id: int = None) -> dict:
         """Cancel existing SL and place new one at entry price (breakeven).
 
-        PR3 fix: Prefer cancelling the specific SL order by ID instead of
+        PR3 fix: Prefer cancelling the specific SL algo order by ID instead of
         cancel_all_orders, which would also cancel user's manual orders.
+        Uses Algo Order API for STOP_MARKET placement.
         """
         if sl_order_id:
-            self.cancel_order(symbol, sl_order_id)
+            self._cancel_algo_order(sl_order_id)
         else:
-            self._cancel_stop_orders(symbol)
+            self._cancel_algo_stop_orders(symbol)
 
         sl_side = 'SELL' if direction == 'LONG' else 'BUY'
         sl_price = self._round_price(symbol, entry_price)
 
-        sl_order = self._request('POST', '/fapi/v1/order', {
-            'symbol': symbol,
-            'side': sl_side,
-            'type': 'STOP_MARKET',
-            'closePosition': 'true',
-            'stopPrice': sl_price,
-        })
+        sl_order = self._place_algo_stop(symbol, sl_side, sl_price,
+                                         close_position=True)
         logger.info(
-            f"SL moved to breakeven: {symbol} stop={sl_price} "
-            f"orderId={sl_order.get('orderId')}"
+            f"SL moved to breakeven: {symbol} trigger={sl_price} "
+            f"algoId={sl_order.get('algoId')}"
         )
         return sl_order
 
@@ -376,7 +403,9 @@ class BinanceTrader:
         """Cancel only STOP_MARKET orders for a symbol (not user's limit orders).
 
         PR3 fix: Used as fallback when we don't have a specific SL order ID.
+        Checks both legacy /openOrders and new /openAlgoOrders endpoints.
         """
+        # Cancel any legacy stop orders (placed before migration)
         try:
             orders = self._request('GET', '/fapi/v1/openOrders',
                                    {'symbol': symbol})
@@ -384,21 +413,54 @@ class BinanceTrader:
                 if order.get('type') in ('STOP_MARKET', 'STOP'):
                     self.cancel_order(symbol, order['orderId'])
                     logger.info(
-                        f"Cancelled stop order {order['orderId']} for {symbol}"
+                        f"Cancelled legacy stop order {order['orderId']} "
+                        f"for {symbol}"
                     )
         except BinanceAPIError as e:
-            logger.warning(f"Failed to query/cancel stop orders for {symbol}: {e}")
+            logger.warning(
+                f"Failed to query/cancel legacy stop orders for {symbol}: {e}"
+            )
+        # Cancel algo stop orders (new endpoint)
+        self._cancel_algo_stop_orders(symbol)
+
+    def _cancel_algo_stop_orders(self, symbol: str):
+        """Cancel STOP_MARKET algo orders for a symbol via Algo Order API."""
+        try:
+            orders = self._request('GET', '/fapi/v1/openAlgoOrders',
+                                   {'symbol': symbol})
+            for order in orders:
+                order_type = order.get('orderType', '')
+                if order_type in ('STOP_MARKET', 'STOP'):
+                    algo_id = order.get('algoId')
+                    if algo_id:
+                        self._cancel_algo_order(algo_id)
+                        logger.info(
+                            f"Cancelled algo stop order {algo_id} "
+                            f"for {symbol}"
+                        )
+        except BinanceAPIError as e:
+            logger.warning(
+                f"Failed to query/cancel algo stop orders for {symbol}: {e}"
+            )
 
     def cancel_all_orders(self, symbol: str) -> dict:
-        """Cancel all open orders for a symbol."""
+        """Cancel all open orders for a symbol (both regular and algo)."""
+        result = {}
+        # Cancel regular orders (LIMIT, MARKET, etc.)
         try:
             result = self._request('DELETE', '/fapi/v1/allOpenOrders',
                                    {'symbol': symbol})
-            logger.info(f"All orders cancelled: {symbol}")
-            return result
+            logger.info(f"All regular orders cancelled: {symbol}")
         except BinanceAPIError as e:
-            logger.warning(f"Cancel orders failed for {symbol}: {e}")
-            return {}
+            logger.warning(f"Cancel regular orders failed for {symbol}: {e}")
+        # Cancel algo orders (STOP_MARKET, TAKE_PROFIT_MARKET, etc.)
+        try:
+            self._request('DELETE', '/fapi/v1/algoOpenOrders',
+                          {'symbol': symbol})
+            logger.info(f"All algo orders cancelled: {symbol}")
+        except BinanceAPIError as e:
+            logger.warning(f"Cancel algo orders failed for {symbol}: {e}")
+        return result
 
     def close_position(self, symbol: str) -> dict | None:
         """Emergency close: full position at market + cancel all orders."""

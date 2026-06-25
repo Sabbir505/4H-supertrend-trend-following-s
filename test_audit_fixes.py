@@ -189,48 +189,51 @@ class TestScopedCancelOrders:
         return trader
 
     def test_cancel_specific_sl_order_when_id_provided(self):
-        """When sl_order_id is given, cancel only that order."""
+        """When sl_order_id is given, cancel via _cancel_algo_order."""
         trader = self._make_trader()
-        trader.cancel_order = MagicMock(return_value={})
+        trader._cancel_algo_order = MagicMock(return_value={})
         trader.cancel_all_orders = MagicMock()
-        trader._cancel_stop_orders = MagicMock()
-        trader._request = MagicMock(return_value={"orderId": 999})
+        trader._cancel_algo_stop_orders = MagicMock()
+        trader._place_algo_stop = MagicMock(return_value={"algoId": 999})
         trader._round_price = MagicMock(return_value=100.0)
 
         trader.move_sl_to_breakeven("BTCUSDT", 100.0, "LONG", sl_order_id=12345)
 
-        trader.cancel_order.assert_called_once_with("BTCUSDT", 12345)
+        trader._cancel_algo_order.assert_called_once_with(12345)
         trader.cancel_all_orders.assert_not_called()
-        trader._cancel_stop_orders.assert_not_called()
+        trader._cancel_algo_stop_orders.assert_not_called()
 
     def test_cancel_stop_orders_fallback_when_no_id(self):
-        """When no sl_order_id, use _cancel_stop_orders (not cancel_all_orders)."""
+        """When no sl_order_id, use _cancel_algo_stop_orders (not cancel_all_orders)."""
         trader = self._make_trader()
-        trader.cancel_order = MagicMock(return_value={})
+        trader._cancel_algo_order = MagicMock(return_value={})
         trader.cancel_all_orders = MagicMock()
-        trader._cancel_stop_orders = MagicMock()
-        trader._request = MagicMock(return_value={"orderId": 999})
+        trader._cancel_algo_stop_orders = MagicMock()
+        trader._place_algo_stop = MagicMock(return_value={"algoId": 999})
         trader._round_price = MagicMock(return_value=100.0)
 
         trader.move_sl_to_breakeven("BTCUSDT", 100.0, "LONG", sl_order_id=None)
 
-        trader._cancel_stop_orders.assert_called_once_with("BTCUSDT")
+        trader._cancel_algo_stop_orders.assert_called_once_with("BTCUSDT")
         trader.cancel_all_orders.assert_not_called()
 
     def test_cancel_stop_orders_only_cancels_stop_types(self):
-        """_cancel_stop_orders should only cancel STOP_MARKET orders."""
+        """_cancel_stop_orders should only cancel STOP_MARKET orders (legacy)."""
         trader = self._make_trader()
-        trader._request = MagicMock(return_value=[
+        # Mock _request to return legacy orders for first call, empty for algo
+        legacy_orders = [
             {"orderId": 1, "type": "STOP_MARKET"},
             {"orderId": 2, "type": "LIMIT"},
             {"orderId": 3, "type": "STOP"},
             {"orderId": 4, "type": "TAKE_PROFIT_MARKET"},
-        ])
+        ]
+        trader._request = MagicMock(side_effect=[legacy_orders, []])
         trader.cancel_order = MagicMock(return_value={})
+        trader._cancel_algo_order = MagicMock(return_value={})
 
         trader._cancel_stop_orders("BTCUSDT")
 
-        # Should only cancel orders 1 (STOP_MARKET) and 3 (STOP)
+        # Should only cancel legacy orders 1 (STOP_MARKET) and 3 (STOP)
         cancelled_ids = [
             call.args[1] for call in trader.cancel_order.call_args_list
         ]
