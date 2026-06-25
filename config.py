@@ -18,8 +18,34 @@ class Config:
         self.telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
 
-        # Binance (no API key needed for public market data)
+        # Binance (public market data)
         self.binance_base_url = "https://api.binance.com"
+
+        # Binance Futures API (for auto-trading)
+        self.binance_api_key = os.getenv("BINANCE_API_KEY", "")
+        self.binance_api_secret = os.getenv("BINANCE_API_SECRET", "")
+
+        # Auto-trading settings
+        auto_trade = os.getenv("AUTO_TRADING_ENABLED", "false").lower()
+        self.auto_trading_enabled = auto_trade in ("true", "1", "yes")
+
+        try:
+            self.trade_amount_usdt = float(os.getenv("TRADE_AMOUNT_USDT", "1"))
+            if self.trade_amount_usdt <= 0:
+                logger.warning("TRADE_AMOUNT_USDT must be positive, using default $1")
+                self.trade_amount_usdt = 1.0
+        except ValueError:
+            logger.warning("Invalid TRADE_AMOUNT_USDT, using default $1")
+            self.trade_amount_usdt = 1.0
+
+        try:
+            self.max_open_positions = int(os.getenv("MAX_OPEN_POSITIONS", "13"))
+            if self.max_open_positions <= 0:
+                logger.warning("MAX_OPEN_POSITIONS must be positive, using default 13")
+                self.max_open_positions = 13
+        except ValueError:
+            logger.warning("Invalid MAX_OPEN_POSITIONS, using default 13")
+            self.max_open_positions = 13
 
         # Strategy settings with validation (Bug #31 fix)
         try:

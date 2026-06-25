@@ -134,27 +134,6 @@ class SignalEngine:
         else:
             return 'NEUTRAL'
 
-    # ─── Adaptive TP Levels ─────────────────────────────────────────────────
-
-    def get_adaptive_tp_multipliers(self, atr: float, atr_ma: float) -> list:
-        """Adjust TP levels based on volatility regime"""
-        if atr <= 0 or atr_ma <= 0:
-            return [1.5, 2.0, 2.5, 3.0]
-
-        volatility_ratio = atr / atr_ma
-
-        if volatility_ratio > 1.5:
-            # High volatility - wider TPs
-            logger.debug(f"High volatility ({volatility_ratio:.2f}), using wider TPs")
-            return [2.0, 2.5, 3.0, 4.0]
-        elif volatility_ratio > 1.2:
-            # Elevated volatility
-            logger.debug(f"Elevated volatility ({volatility_ratio:.2f})")
-            return [1.75, 2.25, 2.75, 3.5]
-        else:
-            # Normal volatility
-            return [1.5, 2.0, 3.0, 4.0]
-
     # ─── Signal Generation (1H) ──────────────────────────────────────────────
 
     def generate_signal(self, df: pd.DataFrame, symbol: str) -> dict | None:

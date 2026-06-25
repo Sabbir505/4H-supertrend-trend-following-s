@@ -21,6 +21,8 @@ from telegram_bot import TelegramBot
 from tracker import SignalTracker
 from reporter import PerformanceReporter
 from config import Config
+from binance_trader import BinanceTrader
+from risk_manager import RiskManager
 
 # Optional win predictor import
 try:
@@ -107,7 +109,19 @@ config = Config()
 scanner = CryptoScanner(config)
 signal_engine = SignalEngine()
 telegram = TelegramBot(config, scanner)
-tracker = SignalTracker(config, telegram)
+
+# Initialize Binance auto-trader (active only when API keys + enabled)
+trader = None
+risk_mgr = None
+if config.auto_trading_enabled and config.binance_api_key:
+    trader = BinanceTrader(config, scanner)
+    risk_mgr = RiskManager(config, trader)
+    logger.info("Binance auto-trading ENABLED (TRADE_AMOUNT=$%s, MAX_POS=%s)",
+                config.trade_amount_usdt, config.max_open_positions)
+else:
+    logger.info("Auto-trading disabled — signals sent to Telegram only")
+
+tracker = SignalTracker(config, telegram, trader=trader)
 reporter = PerformanceReporter(telegram)
 
 # Shared state: 4H trend bias per symbol + BTC market regime
@@ -268,52 +282,6 @@ def detect_market_regime_from_btc():
         return 'NEUTRAL'
 
 
-def is_good_trading_hour(config) -> bool:
-    """
-    Check if current UTC hour is within the trading window.
-    Returns True if trading is allowed, False otherwise.
-    """
-    try:
-        # Get current UTC hour
-        current_hour = datetime.now(timezone.utc).hour
-
-        # Get trading hours from config (default: 8-20 UTC)
-        start_hour = getattr(config, 'trading_start_hour', 8)
-        end_hour = getattr(config, 'trading_end_hour', 20)
-
-        # Check if within trading window
-        if start_hour <= end_hour:
-            # Normal range (e.g., 8-20)
-            return start_hour <= current_hour < end_hour
-        else:
-            # Overnight range (e.g., 22-6)
-            return current_hour >= start_hour or current_hour < end_hour
-
-    except Exception as e:
-        logger.error(f"Error checking trading hour: {e}")
-        return True  # Default to allowing trades on error
-
-
-def get_market_regime(scanner, signal_engine) -> str:
-    """
-    Fetch BTC 4H candles and use signal_engine.get_trend_bias() to detect regime.
-    Returns: 'BULL' | 'BEAR' | 'NEUTRAL'
-    """
-    try:
-        df = scanner.fetch_candles('BTCUSDT', '4h', limit=100)
-        if df is None or len(df) < 60:
-            logger.warning("Could not fetch BTC 4H data for regime detection")
-            return 'NEUTRAL'
-
-        # Use SignalEngine's get_trend_bias for regime detection
-        bias = signal_engine.get_trend_bias(df)
-        return bias
-
-    except Exception as e:
-        logger.error(f"Error getting market regime: {e}")
-        return 'NEUTRAL'
-
-
 def run_4h_ema_crossover_scan():
     """Runs every 4H alongside trend scan — checks top 100 by market cap for EMA21/55 crossovers."""
     logger.info("=== 4H EMA CROSSOVER SCAN STARTED ===")
@@ -393,7 +361,7 @@ def run_1h_scan():
     logger.info("=== 1H SIGNAL SCAN STARTED ===")
 
     # ── MARKET REGIME FILTER ─────────────────────────────────────────────
-    market_regime = get_market_regime(scanner, signal_engine)
+    market_regime = detect_market_regime_from_btc()
     logger.info(f"Market Regime: {market_regime} (BULL=LONGs only, BEAR=SHORTs only, NEUTRAL=skip)")
 
     symbols = scanner.get_top_100_symbols()
@@ -516,6 +484,7 @@ def run_1h_scan():
     for sig in strong_signals[:max_per_tier]:
         try:
             telegram.send_signal(sig)
+            _auto_trade_signal(sig)
             tracker.log_signal(sig)
             time.sleep(1)
         except Exception as e:
@@ -524,12 +493,60 @@ def run_1h_scan():
     for sig in standard_signals[:max_per_tier]:
         try:
             telegram.send_signal(sig)
+            _auto_trade_signal(sig)
             tracker.log_signal(sig)
             time.sleep(1)
         except Exception as e:
             logger.error(f"Signal send error: {e}")
 
     logger.info("=== 1H SCAN COMPLETE ===")
+
+
+def _auto_trade_signal(sig: dict):
+    """Execute auto-trade on Binance if enabled and risk checks pass.
+
+    Attaches order metadata (futures_symbol, entry_quantity, order IDs)
+    to the signal dict so tracker.log_signal() stores them.
+    """
+    if trader is None or risk_mgr is None:
+        return
+
+    # Risk checks
+    allowed, reason = risk_mgr.can_open_trade()
+    if not allowed:
+        logger.info(f"Auto-trade skipped for {sig['symbol']}: {reason}")
+        return
+
+    valid, reason = risk_mgr.validate_signal(sig)
+    if not valid:
+        logger.warning(f"Signal validation failed for {sig['symbol']}: {reason}")
+        return
+
+    try:
+        result = trader.open_position(sig)
+        # Attach Binance order info to signal for tracker storage
+        sig['futures_symbol'] = result['futures_symbol']
+        sig['entry_quantity'] = result['entry_quantity']
+        sig['binance_entry_order_id'] = result['entry_order_id']
+        sig['binance_sl_order_id'] = result['sl_order_id']
+        sig['actual_entry_price'] = result.get('actual_entry_price', sig['entry'])
+        logger.info(
+            f"Auto-trade opened: {sig['symbol']} "
+            f"({result['futures_symbol']}) qty={result['entry_quantity']}"
+        )
+        telegram.send_message(
+            f"<b>Auto-Trade Opened</b>\n"
+            f"{sig['symbol']} {sig['direction']}\n"
+            f"Qty: {result['entry_quantity']}\n"
+            f"Entry: {sig['entry']} | SL: {sig['sl']}",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Auto-trade FAILED for {sig['symbol']}: {e}")
+        telegram.send_message(
+            f"Auto-trade FAILED for {sig['symbol']}: {e}",
+            parse_mode=None
+        )
 
 
 def run_monitor():
@@ -539,6 +556,7 @@ def run_monitor():
 
 def run_startup():
     logger.info("Bot starting — running initial scans...")
+    tracker.reconcile_positions()
     run_4h_scan()
     run_4h_ema_crossover_scan()
     run_1h_scan()
@@ -586,6 +604,11 @@ if __name__ == "__main__":
     logger.info(f"  - Market Regime Filter: Enabled")
     logger.info(f"  - Symbol Win Rate Filter: {'Enabled' if hasattr(tracker, 'should_skip_symbol') else 'Disabled (method not found)'}")
     logger.info(f"  - Win Predictor: {'Enabled' if win_predictor else 'Disabled'}")
+    logger.info(f"  - Auto-Trading: {'Enabled' if trader else 'Disabled'}")
+    if trader:
+        logger.info(f"    Trade Amount: ${config.trade_amount_usdt}")
+        logger.info(f"    Max Positions: {config.max_open_positions}")
+        logger.info(f"    Leverage: {config.leverage}x")
 
     # Start web servers before trading logic
     backend_started = start_backend()

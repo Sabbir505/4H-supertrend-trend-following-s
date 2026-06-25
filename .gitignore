@@ -27,3 +27,4 @@ bot.log
 api_output.log
 __pycache__/
 *.pyc
+models/

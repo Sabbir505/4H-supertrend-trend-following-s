@@ -3,19 +3,57 @@ TradeEdge API Server
 Serves trading signals and backtest data to the Next.js frontend
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import json
 import os
+import time as _time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import logging
 import asyncio
 
 app = FastAPI(title="TradeEdge API", version="1.0.0")
+
+# ─── API Key Authentication ──────────────────────────────────────────────────
+
+API_KEY = os.getenv("API_SERVER_KEY", "")
+
+
+async def verify_api_key(request: Request):
+    """Verify API key from X-API-Key header. Skipped when API_SERVER_KEY is not set."""
+    if not API_KEY:
+        return
+    key = request.headers.get("X-API-Key", "")
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+# ─── Rate Limiting ───────────────────────────────────────────────────────────
+
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+RATE_LIMIT_MAX = int(os.getenv("API_RATE_LIMIT", "60"))  # requests per window
+RATE_LIMIT_WINDOW = 60  # seconds
+
+
+async def rate_limit(request: Request):
+    """Simple per-IP sliding-window rate limiter."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+    timestamps = _rate_limit_store[client_ip]
+    # Prune old entries
+    _rate_limit_store[client_ip] = [t for t in timestamps if t > window_start]
+    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded ({RATE_LIMIT_MAX} requests per {RATE_LIMIT_WINDOW}s)"
+        )
+    _rate_limit_store[client_ip].append(now)
 
 # Import market intel module
 try:
@@ -31,14 +69,12 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Enable CORS for Next.js frontend
+# Enable CORS for Next.js frontend (pinned to specific deployment URLs)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
-        "https://*.netlify.app",
-        "https://*.railway.app",
         "https://stellar-sorbet-b0f512.netlify.app",
         "https://algo-testing-phase.netlify.app",
     ],
@@ -304,7 +340,13 @@ async def root():
     return {"message": "TradeEdge API", "version": "1.0.0"}
 
 
-@app.get("/api/signals", response_model=List[Signal])
+@app.get("/health")
+async def health():
+    """Health check endpoint for Railway/Docker."""
+    return {"status": "ok"}
+
+
+@app.get("/api/signals", response_model=List[Signal], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_signals(status: Optional[str] = Query(None, description="Filter by status: OPEN, TP1, TP2, TP3, TP4, SL, BREAKEVEN, EXPIRED")):
     """Get all signals, optionally filtered by status"""
     signals = load_signals()
@@ -313,7 +355,7 @@ async def get_signals(status: Optional[str] = Query(None, description="Filter by
     return signals
 
 
-@app.get("/api/signals/open", response_model=List[Signal])
+@app.get("/api/signals/open", response_model=List[Signal], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_open_signals():
     """Get all open signals (live trades) — includes OPEN, TP1, TP2, TP3 (not fully closed)"""
     signals = load_signals()
@@ -322,7 +364,7 @@ async def get_open_signals():
     return open_signals
 
 
-@app.get("/api/signals/closed", response_model=List[Signal])
+@app.get("/api/signals/closed", response_model=List[Signal], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_closed_signals():
     """Get all closed signals (trade history) — includes partial TP hits TP1-TP3 and fully closed TP4, SL, BREAKEVEN, EXPIRED, WIN"""
     signals = load_signals()
@@ -331,7 +373,7 @@ async def get_closed_signals():
     return closed
 
 
-@app.get("/api/signals/partial", response_model=List[Signal])
+@app.get("/api/signals/partial", response_model=List[Signal], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_partial_signals():
     """Get partially closed signals — TP1, TP2, TP3 (position still partially open)"""
     signals = load_signals()
@@ -340,7 +382,7 @@ async def get_partial_signals():
     return partial
 
 
-@app.get("/api/signals/{signal_id}")
+@app.get("/api/signals/{signal_id}", dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_signal(signal_id: str):
     """Get a specific signal by ID"""
     signals = load_signals()
@@ -350,13 +392,13 @@ async def get_signal(signal_id: str):
     raise HTTPException(status_code=404, detail="Signal not found")
 
 
-@app.get("/api/backtest", response_model=List[BacktestResult])
+@app.get("/api/backtest", response_model=List[BacktestResult], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_backtest_results():
     """Get all backtest results"""
     return load_backtest_results()
 
 
-@app.get("/api/backtest/{symbol}")
+@app.get("/api/backtest/{symbol}", dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_backtest_for_symbol(symbol: str):
     """Get backtest result for a specific symbol"""
     results = load_backtest_results()
@@ -366,7 +408,7 @@ async def get_backtest_for_symbol(symbol: str):
     raise HTTPException(status_code=404, detail="Backtest result not found")
 
 
-@app.get("/api/dashboard/stats", response_model=DashboardStats)
+@app.get("/api/dashboard/stats", response_model=DashboardStats, dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_dashboard_stats():
     """Get aggregated dashboard statistics"""
     signals = load_signals()
@@ -448,7 +490,7 @@ async def get_dashboard_stats():
     )
 
 
-@app.get("/api/live-trades", response_model=List[LiveTrade])
+@app.get("/api/live-trades", response_model=List[LiveTrade], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_live_trades():
     """Get live trades formatted for the Live Trades page"""
     signals = load_signals()
@@ -478,7 +520,7 @@ async def get_live_trades():
     return trades
 
 
-@app.get("/api/analytics/summary")
+@app.get("/api/analytics/summary", dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_analytics_summary():
     """Get analytics summary data"""
     signals = load_signals()
@@ -525,7 +567,7 @@ async def get_analytics_summary():
 
 # ─── Market Intel Endpoints ────────────────────────────────────────────────────
 
-@app.get("/api/market/calendar", response_model=List[EconomicEvent])
+@app.get("/api/market/calendar", response_model=List[EconomicEvent], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_economic_calendar():
     """Get economic calendar events for the next 14 days"""
     if not MARKET_INTEL_AVAILABLE:
@@ -535,7 +577,7 @@ async def get_economic_calendar():
     return events
 
 
-@app.get("/api/market/news", response_model=List[CryptoNews])
+@app.get("/api/market/news", response_model=List[CryptoNews], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_crypto_news():
     """Get latest crypto news from CryptoPanic"""
     if not MARKET_INTEL_AVAILABLE:
@@ -545,7 +587,7 @@ async def get_crypto_news():
     return news
 
 
-@app.get("/api/market/events", response_model=List[TokenEvent])
+@app.get("/api/market/events", response_model=List[TokenEvent], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_token_events():
     """Get upcoming token-specific events from CoinGecko"""
     if not MARKET_INTEL_AVAILABLE:
@@ -555,7 +597,7 @@ async def get_token_events():
     return events
 
 
-@app.get("/api/market/impact", response_model=List[ImpactCorrelation])
+@app.get("/api/market/impact", response_model=List[ImpactCorrelation], dependencies=[Depends(verify_api_key), Depends(rate_limit)])
 async def get_impact_analysis():
     """
     Analyze impact of upcoming events on open positions.

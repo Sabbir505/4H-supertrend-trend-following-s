@@ -25,21 +25,6 @@ import { calculateRR } from "@/lib/utils";
 
 const COLORS = ["var(--chart-1)", "var(--chart-4)", "var(--chart-3)", "var(--chart-5)", "var(--chart-5)", "#ec4899", "#14b8a6"];
 
-const outcomeColors: Record<string, string> = {
-  "TP1 Hit": "var(--chart-1)",
-  "TP2 Hit": "var(--chart-1)",
-  "TP3 Hit": "var(--chart-1)",
-  "TP4 Hit": "var(--chart-1)",
-  TP1: "var(--chart-1)",
-  TP2: "var(--chart-1)",
-  TP3: "var(--chart-1)",
-  TP4: "var(--chart-1)",
-  WIN: "var(--chart-1)",
-  SL: "var(--chart-4)",
-  BREAKEVEN: "var(--chart-3)",
-  EXPIRED: "var(--chart-5)",
-};
-
 function formatPeriodLabel(period: string, grouping: "daily" | "monthly" | "yearly") {
   if (grouping === "daily") {
     return new Date(period).toLocaleDateString("en-US", {
@@ -232,7 +217,9 @@ export default function AnalyticsPage() {
         if (["TP1", "TP2", "TP3", "TP4", "WIN"].includes(s.status)) grouped[key].wins++;
         if (s.status === "SL") grouped[key].losses++;
         grouped[key].rr += calculateRR(s);
-      } catch {}
+      } catch {
+        // Skip signals with invalid/missing date fields
+      }
     });
     return Object.entries(grouped)
       .map(([period, data]) => ({
