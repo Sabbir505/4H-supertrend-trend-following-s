@@ -6,16 +6,12 @@ import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   LayoutDashboard,
-  Activity,
-  Clock,
-  BarChart3,
-  FlaskConical,
-  Newspaper,
   TrendingUp,
   ChevronLeft,
   ChevronRight,
   Sun,
   Moon,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,21 +20,7 @@ const navSections = [
     label: "Overview",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/live-trades", label: "Live Trades", icon: Activity },
-    ],
-  },
-  {
-    label: "Analysis",
-    items: [
-      { href: "/trade-history", label: "Trade History", icon: Clock },
-      { href: "/analytics", label: "Analytics", icon: BarChart3 },
-    ],
-  },
-  {
-    label: "Tools",
-    items: [
-      { href: "/backtest", label: "Backtest", icon: FlaskConical },
-      { href: "/market-intel", label: "Market Intel", icon: Newspaper },
+      { href: "/signals", label: "Signals", icon: Activity },
     ],
   },
 ];
@@ -84,7 +66,7 @@ export function Sidebar({
               TradeEdge
             </span>
             <span className="text-[11px] text-muted-foreground block leading-tight">
-              Signal Dashboard
+              Supertrend Signal Scanner
             </span>
           </div>
         )}
@@ -172,7 +154,7 @@ export function Sidebar({
           </button>
         </div>
 
-        {/* Bot Status */}
+        {/* Scanner Status */}
         <div
           className={cn(
             "px-2 pb-3 pt-1",
@@ -189,10 +171,10 @@ export function Sidebar({
             {!collapsed && (
               <div>
                 <span className="text-[13px] font-medium text-foreground">
-                  Bot Active
+                  Scanner Active
                 </span>
                 <span className="text-[11px] text-muted-foreground block">
-                  24/7 Crypto
+                  Supertrend 12/3.5 | 4H
                 </span>
               </div>
             )}

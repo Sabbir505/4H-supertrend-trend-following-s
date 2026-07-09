@@ -1,38 +1,44 @@
 # 🤖 TradeEdge — Crypto Signal Bot & Dashboard
 
-Automated cryptocurrency trading signal platform. Scans top 100 Binance coins on 1H and 4H timeframes, generates trading signals via technical analysis, tracks live positions, and provides a Next.js dashboard for monitoring, analytics, and backtesting.
+Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by ATR volatility for **Supertrend flips on the 4H timeframe**, filtered by a 200 EMA trend filter, RSI(14) momentum filter, and an ATR% volatility band. Each signal comes with a full RR-based trade plan (entry / SL / TP). Alerts go to Telegram; a Next.js dashboard shows everything live.
 
 ---
 
-## 📡 Signal Types
+## 📡 Signal Definition
 
-| Type | Condition | Icon |
-|------|-----------|------|
-| **STRONG** | 4H trend + 1H trigger both confirm | 🔥 |
-| **STANDARD** | 1H signal only | ⚡ |
+A signal fires on the just-closed 4H candle when **all** of these are true:
 
-## 📊 Strategy: Triple Confirmation Trend System (4-TP)
+| Direction | Supertrend flip | 200 EMA | RSI(14) | ATR% range |
+|-----------|-----------------|---------|---------|------------|
+| **BUY** | bearish → bullish | price > EMA200 | RSI > 55 | 0.5% – 5.0% |
+| **SELL** | bullish → bearish | price < EMA200 | RSI < 45 | 0.5% – 5.0% |
+
+### Trade Plan (per signal, RR-based)
+
+For a BUY (SELL mirrored):
+- `entry` = current close
+- `atr` = ATR(12) at signal candle
+- `sl` = entry − 1.5 × atr
+- `tp` = entry + 1.5 × atr
+- `rr` = 1.5
+- `supertrend_value` = Supertrend line at signal candle
+
+---
+
+## 📊 Strategy Configuration
 
 | Indicator | Settings | Role |
 |-----------|----------|------|
-| EMA 21/55 | — | Trend direction |
-| RSI 14 | LONG: 40-80, SHORT: 20-60 | Momentum filter |
-| MACD 12/26/9 | Histogram direction + strength | Entry trigger |
-| ADX 14 | ≥ 25 | Trend strength filter |
-| ATR 14 | SL = 1.0×, TP1 = 1.5×, TP2 = 2.0×, TP3 = 3.0×, TP4 = 4.0× | Risk sizing |
-| Volume MA 20 | > 1.2× average | Quality filter |
+| Supertrend | ATR 12, multiplier 3.5 | Flip trigger |
+| EMA 200 | — | Trend filter |
+| RSI 14 | Long > 55, Short < 45 | Momentum filter |
+| ATR % | 0.5% – 5.0% of price | Volatility filter |
+| RR multiplier | 1.5 × ATR | Trade plan sizing |
 
-## 🎯 4-TP Incremental Closing System
-
-| Level | ATR Multiplier | RR Value | Close % | Position Remaining |
-|-------|----------------|----------|---------|-------------------|
-| **TP1** | 1.5× | 1.5R | 40% | 60% |
-| **TP2** | 2.0× | 2.0R | 30% | 30% |
-| **TP3** | 3.0× | 3.0R | 20% | 10% |
-| **TP4** | 4.0× | 4.0R | 10% | 0% |
-
-- SL moves to breakeven (entry price) after TP1 hit
-- BREAKEVEN = sum of hit TPs only (uses `tp1_hit`, `tp2_hit`, etc.)
+- **Timeframe:** 4H
+- **Universe:** Top 100 by 24h quote volume + Top 100 by ATR volatility (merged, deduped)
+- **Cooldown:** 4 hours per (symbol, direction)
+- **Scan cadence:** hourly at :05 (overlap-safe; dedup suppresses repeats)
 
 ---
 
@@ -64,23 +70,18 @@ Edit `.env`:
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
 TELEGRAM_CHAT_ID=123456789
 
-# Strategy
-TOP_N_COINS=100
-MAX_SIGNALS_PER_SCAN=20
-
-# ATR Multipliers
-ATR_SL_MULTIPLIER=1.0
-ATR_TP1_MULTIPLIER=1.5
-ATR_TP2_MULTIPLIER=2.0
-ATR_TP3_MULTIPLIER=3.0
-ATR_TP4_MULTIPLIER=4.0
-
-# Trading hours (UTC)
-TRADING_START_HOUR=14
-TRADING_END_HOUR=22
-
-# Quality filter
-MIN_QUALITY_SCORE=60
+# Supertrend strategy (4H)
+SUPERTREND_ATR_PERIOD=12
+SUPERTREND_MULTIPLIER=3.5
+EMA_FILTER_PERIOD=200
+RSI_PERIOD=14
+RSI_LONG_THRESHOLD=55
+RSI_SHORT_THRESHOLD=45
+MIN_ATR_PCT=0.5
+MAX_ATR_PCT=5.0
+RR_MULTIPLIER=1.5
+SCAN_TIMEFRAME=4h
+SIGNAL_COOLDOWN_HOURS=4
 ```
 
 ### 5. Run the bot
@@ -88,10 +89,9 @@ MIN_QUALITY_SCORE=60
 python main.py
 ```
 This starts:
-- Trading bot scheduler (1H scans, 4H trend updates)
+- Scanner scheduler (4H scan every hour at :05)
 - FastAPI backend server on `http://localhost:8001`
-- Next.js frontend dev server on `http://localhost:3000`
-- WebSocket price monitoring for live positions
+- Next.js frontend dev server on `http://localhost:3001`
 
 ---
 
@@ -102,24 +102,15 @@ D:\Main project\files\
 ├── main.py                    # Scheduler + orchestration + servers
 ├── api_server.py              # FastAPI REST API
 ├── config.py                  # Settings management (.env)
-├── scanner.py                 # Binance API + symbol fetching
-├── signals.py                 # Indicator calculations + signal logic
-├── telegram_bot.py            # Telegram alerts (Cornix format)
-├── tracker.py                 # Position tracking + WebSocket monitoring
-├── reporter.py                # Daily/weekly performance reports
-├── market_intel.py            # Economic calendar, news, token events
-├── backtest.py                # Backtesting engine
-├── backtest_directional.py    # Directional strategy with BTC regime filter
-├── backtest_macro_events.py   # Macro event avoidance analysis
-├── backtest_trading_hours.py  # Trading hours filter analysis
-├── signals.json               # Signal database
-├── backtest_results.json      # Backtest results
+├── scanner.py                 # Binance API + Supertrend + filters
+├── signal_tracker.py          # Signal persistence & dedup
+├── telegram_bot.py            # Telegram alerts
+├── signals.json               # Signal database (live)
 ├── data/
-│   ├── signals/               # Archived signals by year/month/week
-│   └── market_intel/          # Cached market data
+│   └── signals/               # Live weekly archives by year/month/week
 └── frontend/                  # Next.js dashboard
     ├── src/
-    │   ├── app/               # Pages (dashboard, live-trades, etc.)
+    │   ├── app/               # Pages (dashboard, signals)
     │   ├── lib/               # API client, utilities
     │   └── components/        # React components, sidebar, layout
     ├── next.config.ts
@@ -130,12 +121,8 @@ D:\Main project\files\
 
 ## ⏰ Schedule
 
-- **Every 1H** → Scans all coins on 1H candles (at :05 past the hour)
-- **Every 4H** → Updates trend bias on 4H candles (00:02, 04:02, 08:02, 12:02, 16:02, 20:02 UTC)
-- **Every 15 min** → Checks open signals via REST fallback
-- **WebSocket** → Real-time price monitoring for all open positions
-- **Daily** → Performance report at 00:05 UTC
-- **Weekly** → Report every Monday at 00:10 UTC
+- **Every hour at :05** → 4H Supertrend scan (overlap-safe; dedup suppresses repeats within the 4h cooldown)
+- **Startup** → one immediate 4H scan
 
 ---
 
@@ -143,26 +130,34 @@ D:\Main project\files\
 
 | Page | Route | Description |
 |------|-------|-------------|
-| **Dashboard** | `/dashboard` | Stats, equity curve, outcome distribution, recent trades |
-| **Live Trades** | `/live-trades` | Real-time position monitoring with Binance price feed |
-| **Trade History** | `/trade-history` | Filterable table of closed trades with pagination |
-| **Analytics** | `/analytics` | Performance metrics, direction/strength/symbol analysis |
-| **Backtest** | `/backtest` | Historical strategy backtest results |
-| **Market Intel** | `/market-intel` | Economic calendar, crypto news, token events |
+| **Dashboard** | `/dashboard` | Stat cards (total / 24h / buy / sell), hourly bar chart, buy-vs-sell pie, recent signals |
+| **Signals** | `/signals` | Filterable table: symbol, direction, entry, SL, TP, RSI, ATR%, EMA200, Supertrend, source, timestamp |
+
+Both pages auto-refresh every 30 seconds.
 
 ---
 
 ## 🔧 Customization
 
 Edit `.env` to adjust:
-- `TOP_N_COINS` — how many coins to scan (default: 100)
+- `TOP_N_COINS` — how many coins per universe (default: 100)
 - `MAX_SIGNALS_PER_SCAN` — max alerts per scan (default: 20)
-- `ATR_SL_MULTIPLIER` — stop loss distance (default: 1.0)
-- `ATR_TP1/TP2/TP3/TP4_MULTIPLIER` — take profit levels
-- `TRADING_START_HOUR` / `TRADING_END_HOUR` — trading window (default: 14-22 UTC)
-- `MIN_QUALITY_SCORE` — minimum quality score to fire signal (default: 60)
-- `LEVERAGE` — leverage for Telegram signals (default: 10)
-- `SIGNAL_EXPIRATION_MINUTES` — signal expiry time (default: 10080 = 7 days)
+- `SUPERTREND_ATR_PERIOD` / `SUPERTREND_MULTIPLIER` — Supertrend params (default: 12 / 3.5)
+- `EMA_FILTER_PERIOD` — trend filter EMA (default: 200)
+- `RSI_LONG_THRESHOLD` / `RSI_SHORT_THRESHOLD` — RSI gates (default: 55 / 45)
+- `MIN_ATR_PCT` / `MAX_ATR_PCT` — volatility band (default: 0.5 / 5.0)
+- `RR_MULTIPLIER` — TP/SL distance in ATR (default: 1.5)
+- `SIGNAL_COOLDOWN_HOURS` — dedup window (default: 4)
+
+---
+
+## 📚 Documentation
+
+- **`AI_CONTEXT.md`** — full architecture, data models, API reference (read this first)
+- **`CLAUDE.md`** — agent rules and dev workflow
+- **`SYSTEM_DOCUMENTATION.md`** — system overview and component reference
+- **`DESIGN.md`** — visual design system
+- **`PRODUCT.md`** — product positioning
 
 ---
 

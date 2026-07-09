@@ -25,5 +25,6 @@ signals.json
 design/
 bot.log
 api_output.log
+bot.lock
 __pycache__/
 *.pyc

@@ -21,7 +21,7 @@ class Config:
         # Binance (no API key needed for public market data)
         self.binance_base_url = "https://api.binance.com"
 
-        # Strategy settings with validation (Bug #31 fix)
+        # Scanner settings
         try:
             self.top_n_coins = int(os.getenv("TOP_N_COINS", "100"))
         except ValueError:
@@ -34,121 +34,78 @@ class Config:
             logger.warning("Invalid MAX_SIGNALS_PER_SCAN, using default 20")
             self.max_signals_per_scan = 20
 
-        try:
-            self.atr_sl_multiplier = float(os.getenv("ATR_SL_MULTIPLIER", "1.0"))
-            self.atr_tp1_multiplier = float(os.getenv("ATR_TP1_MULTIPLIER", "1.5"))
-            self.atr_tp2_multiplier = float(os.getenv("ATR_TP2_MULTIPLIER", "2.0"))
-            self.atr_tp3_multiplier = float(os.getenv("ATR_TP3_MULTIPLIER", "3.0"))
-            self.atr_tp4_multiplier = float(os.getenv("ATR_TP4_MULTIPLIER", "4.0"))
-        except ValueError:
-            logger.warning("Invalid ATR multiplier, using defaults (1.0, 1.5, 2.0, 3.0, 4.0)")
-            self.atr_sl_multiplier = 1.0
-            self.atr_tp1_multiplier = 1.5
-            self.atr_tp2_multiplier = 2.0
-            self.atr_tp3_multiplier = 3.0
-            self.atr_tp4_multiplier = 4.0
+        self.scan_timeframe = os.getenv("SCAN_TIMEFRAME", "4h")
 
-        # TP Position Closing Percentages (must sum to 100%)
-        # 4-TP system: Close 40% at TP1, 30% at TP2, 20% at TP3, 10% at TP4
+        # ─── Supertrend strategy parameters ───
         try:
-            self.tp1_close_pct = float(os.getenv("TP1_CLOSE_PERCENT", "40.0")) / 100.0
-            self.tp2_close_pct = float(os.getenv("TP2_CLOSE_PERCENT", "30.0")) / 100.0
-            self.tp3_close_pct = float(os.getenv("TP3_CLOSE_PERCENT", "20.0")) / 100.0
-            self.tp4_close_pct = float(os.getenv("TP4_CLOSE_PERCENT", "10.0")) / 100.0
+            self.supertrend_atr_period = int(os.getenv("SUPERTREND_ATR_PERIOD", "12"))
         except ValueError:
-            logger.warning("Invalid TP close percent, using defaults (40/30/20/10)")
-            self.tp1_close_pct = 0.40
-            self.tp2_close_pct = 0.30
-            self.tp3_close_pct = 0.20
-            self.tp4_close_pct = 0.10
+            logger.warning("Invalid SUPERTREND_ATR_PERIOD, using default 12")
+            self.supertrend_atr_period = 12
 
-        # Validate TP percentages sum to 100%
-        tp_total = self.tp1_close_pct + self.tp2_close_pct + self.tp3_close_pct + self.tp4_close_pct
-        if abs(tp_total - 1.0) > 0.001:
-            logger.warning(
-                f"TP close percentages sum to {tp_total*100:.1f}% (expected 100%). "
-                f"Using defaults."
+        try:
+            self.supertrend_multiplier = float(os.getenv("SUPERTREND_MULTIPLIER", "3.5"))
+        except ValueError:
+            logger.warning("Invalid SUPERTREND_MULTIPLIER, using default 3.5")
+            self.supertrend_multiplier = 3.5
+
+        try:
+            self.ema_filter_period = int(os.getenv("EMA_FILTER_PERIOD", "200"))
+        except ValueError:
+            logger.warning("Invalid EMA_FILTER_PERIOD, using default 200")
+            self.ema_filter_period = 200
+
+        try:
+            self.rsi_period = int(os.getenv("RSI_PERIOD", "14"))
+        except ValueError:
+            logger.warning("Invalid RSI_PERIOD, using default 14")
+            self.rsi_period = 14
+
+        try:
+            self.rsi_long_threshold = float(os.getenv("RSI_LONG_THRESHOLD", "55"))
+        except ValueError:
+            logger.warning("Invalid RSI_LONG_THRESHOLD, using default 55")
+            self.rsi_long_threshold = 55
+
+        try:
+            self.rsi_short_threshold = float(os.getenv("RSI_SHORT_THRESHOLD", "45"))
+        except ValueError:
+            logger.warning("Invalid RSI_SHORT_THRESHOLD, using default 45")
+            self.rsi_short_threshold = 45
+
+        try:
+            self.min_atr_pct = float(os.getenv("MIN_ATR_PCT", "0.5"))
+        except ValueError:
+            logger.warning("Invalid MIN_ATR_PCT, using default 0.5")
+            self.min_atr_pct = 0.5
+
+        try:
+            self.max_atr_pct = float(os.getenv("MAX_ATR_PCT", "5.0"))
+        except ValueError:
+            logger.warning("Invalid MAX_ATR_PCT, using default 5.0")
+            self.max_atr_pct = 5.0
+
+        try:
+            self.rr_multiplier = float(os.getenv("RR_MULTIPLIER", "1.5"))
+        except ValueError:
+            logger.warning("Invalid RR_MULTIPLIER, using default 1.5")
+            self.rr_multiplier = 1.5
+
+        try:
+            self.signal_cooldown_hours = int(
+                os.getenv("SIGNAL_COOLDOWN_HOURS", "4")
             )
-            self.tp1_close_pct = 0.40
-            self.tp2_close_pct = 0.30
-            self.tp3_close_pct = 0.20
-            self.tp4_close_pct = 0.10
-
-        # Leverage setting for Telegram signals (Bug fix: was hardcoded to 10X)
-        try:
-            self.leverage = int(os.getenv("LEVERAGE", "10"))
         except ValueError:
-            logger.warning("Invalid LEVERAGE, using default 10")
-            self.leverage = 10
-
-        # Signal expiration in minutes (Bug #18 fix) - default 7 days = 10080 minutes
-        try:
-            self.signal_expiration_minutes = int(os.getenv("SIGNAL_EXPIRATION_MINUTES", "10080"))
-            if self.signal_expiration_minutes <= 0:
-                logger.warning("SIGNAL_EXPIRATION_MINUTES must be positive, using default 10080")
-                self.signal_expiration_minutes = 10080
-        except ValueError:
-            logger.warning("Invalid SIGNAL_EXPIRATION_MINUTES, using default 10080 (7 days)")
-            self.signal_expiration_minutes = 10080
-
-        # New trading system improvements (from AI analysis)
-        try:
-            self.min_quality_score = int(os.getenv("MIN_QUALITY_SCORE", "60"))
-            if not (0 <= self.min_quality_score <= 100):
-                logger.warning("MIN_QUALITY_SCORE must be 0-100, using default 60")
-                self.min_quality_score = 60
-        except ValueError:
-            logger.warning("Invalid MIN_QUALITY_SCORE, using default 60")
-            self.min_quality_score = 60
+            logger.warning("Invalid SIGNAL_COOLDOWN_HOURS, using default 4")
+            self.signal_cooldown_hours = 4
 
         try:
-            self.trading_start_hour = int(os.getenv("TRADING_START_HOUR", "14"))
-            self.trading_end_hour = int(os.getenv("TRADING_END_HOUR", "22"))
-            if not (0 <= self.trading_start_hour <= 23):
-                self.trading_start_hour = 14
-            if not (0 <= self.trading_end_hour <= 23):
-                self.trading_end_hour = 22
+            self.volatility_lookback = int(os.getenv("VOLATILITY_LOOKBACK", "14"))
         except ValueError:
-            logger.warning("Invalid trading hours, using defaults 14-22 UTC")
-            self.trading_start_hour = 14
-            self.trading_end_hour = 22
-
-        try:
-            self.symbol_win_rate_min = float(os.getenv("SYMBOL_WIN_RATE_MIN", "0.40"))
-            if not (0.0 <= self.symbol_win_rate_min <= 1.0):
-                self.symbol_win_rate_min = 0.40
-        except ValueError:
-            logger.warning("Invalid SYMBOL_WIN_RATE_MIN, using default 0.40")
-            self.symbol_win_rate_min = 0.40
-
-        # Adaptive TP levels
-        adaptive_tp = os.getenv("ADAPTIVE_TP_ENABLED", "true").lower()
-        self.adaptive_tp_enabled = adaptive_tp in ("true", "1", "yes")
-
-        # Market regime detection parameters
-        try:
-            self.regime_ema_fast = int(os.getenv("REGIME_EMA_FAST", "21"))
-        except ValueError:
-            logger.warning("Invalid REGIME_EMA_FAST, using default 21")
-            self.regime_ema_fast = 21
-        try:
-            self.regime_ema_slow = int(os.getenv("REGIME_EMA_SLOW", "55"))
-        except ValueError:
-            logger.warning("Invalid REGIME_EMA_SLOW, using default 55")
-            self.regime_ema_slow = 55
-        try:
-            self.regime_rsi_period = int(os.getenv("REGIME_RSI_PERIOD", "14"))
-        except ValueError:
-            logger.warning("Invalid REGIME_RSI_PERIOD, using default 14")
-            self.regime_rsi_period = 14
-        try:
-            self.regime_rsi_threshold = float(os.getenv("REGIME_RSI_THRESHOLD", "50"))
-        except ValueError:
-            logger.warning("Invalid REGIME_RSI_THRESHOLD, using default 50.0")
-            self.regime_rsi_threshold = 50.0
+            logger.warning("Invalid VOLATILITY_LOOKBACK, using default 14")
+            self.volatility_lookback = 14
 
         # Pairs excluded from trading (documented reasons)
-        # Bug fix: Removed invalid/non-existent pairs (UUSDT, ASTERUSDT)
         self.excluded_pairs = {
             "TRXUSDT",    # Low volatility, poor performance
             "PORTALUSDT", # Low liquidity, unreliable signals
@@ -183,9 +140,9 @@ class Config:
             "USDSUSDT",
             "USDEUSDT",
             "USYCUSDT",
-            "USDCUSDT",   # Already in stablecoins but double-check
-            "USDTUSDT",   # Self-pair, nonsense
-            "DAIUSDT",    # Already in stablecoins
+            "USDCUSDT",
+            "USDTUSDT",
+            "DAIUSDT",
             "FDUSDUSDT",
             "TUSDUSDT",
             "BUSDUSDT",
@@ -196,20 +153,20 @@ class Config:
             "FRAXUSDT",
             "LUSDUSDT",
             "SUSDUSDT",
-            "RLUSDUSDT",  # Ripple USD stablecoin
-            "USDGUSDT",   # Stablecoin variants
+            "RLUSDUSDT",
+            "USDGUSDT",
             "USDYUSDT",
-            "MUSDT",      # Stablecoin-like behavior
-            "OKBUSDT",    # OKB stablecoin
-            "CROUSDT",    # Cronos (low volatility)
-            "LEOUSDT",    # LEO token (stablecoin-like)
-            "BUIDLUSDT",  # Stablecoin
-            "RAINUSDT",   # Low liquidity forex-like
-            "FIGR_HELOCUSDT",  # Financial product, not crypto
-            "HYPEUSDT",   # Stablecoin-like
-            "LABUSDT",    # Stablecoin-like
-            "CCUSDT",     # Low liquidity
-            "WBTUSDT",    # WhiteBit token (stablecoin-like)
+            "MUSDT",
+            "OKBUSDT",
+            "CROUSDT",
+            "LEOUSDT",
+            "BUIDLUSDT",
+            "RAINUSDT",
+            "FIGR_HELOCUSDT",
+            "HYPEUSDT",
+            "LABUSDT",
+            "CCUSDT",
+            "WBTUSDT",
         }
 
     def validate(self) -> bool:

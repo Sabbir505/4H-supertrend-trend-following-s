@@ -1,8 +1,5 @@
 """
-Telegram Bot - Sends formatted signal alerts
-Two message types:
-1. Cornix-readable signal (plain text, strict format for auto-trading)
-2. Human-readable signal (HTML formatted, detailed info)
+Telegram Bot - Sends Supertrend signal alerts
 """
 
 import requests
@@ -19,7 +16,7 @@ class TelegramBot:
         self.token = config.telegram_token
         self.chat_id = config.telegram_chat_id
         self.base_url = f"https://api.telegram.org/bot{self.token}"
-        self.scanner = scanner  # For futures symbol mapping
+        self.scanner = scanner
 
     def send_message(self, text: str, parse_mode: str = 'HTML') -> bool:
         for attempt in range(3):
@@ -45,157 +42,58 @@ class TelegramBot:
         logger.error("All Telegram send attempts failed")
         return False
 
-    def send_signal(self, signal: dict) -> bool:
-        # Send only Cornix-readable signal (Cornix handles TP/SL outcomes)
-        cornix_msg = self._format_cornix_signal(signal)
-        return self.send_message(cornix_msg, parse_mode=None)
-
-    def _format_cornix_signal(self, s: dict) -> str:
-        """Format signal for Cornix auto-trading bot (strict format, no emojis).
-
-        Cornix rules:
-        - Always include full coin pair name (BTC/USDT)
-        - Always include 'Buy' or 'Entry' keyword
-        - Always include 'Sell' or 'Stop' keywords
-        - Use 'Take-Profit' for targets
-        - All targets as prices (not percentages)
-        - Only one Stop Loss
-        - Minimize emojis, unicode, extra text
-        - Trailing config must use exact header phrase
-        - Stop can't be above entry for LONG or below entry for SHORT
-        """
-        symbol = s['symbol']
-        # Get the correct futures symbol name (handles 1000PEPEUSDT etc.)
-        if self.scanner:
-            futures_sym = self.scanner.get_futures_symbol(symbol)
-        else:
-            futures_sym = symbol
-        # Convert to Cornix pair format: BTCUSDT -> BTC/USDT
-        if futures_sym.endswith('USDT') and '/' not in futures_sym:
-            pair = futures_sym.replace('USDT', '/USDT')
-        else:
-            pair = futures_sym
-
-        direction = s['direction']
-        entry = s['entry']
-        sl = s['sl']
-        tp1 = s['tp1']
-        tp2 = s['tp2']
-        tp3 = s['tp3']
-        tp4 = s['tp4']
-
-        # Cornix auto-detects direction from buy/sell prices
-        # But we specify it explicitly for clarity
-        if direction == 'LONG':
-            signal_type = "Signal Type: Regular (Long)"
-        else:
-            signal_type = "Signal Type: Regular (Short)"
-
-        leverage = getattr(self.config, 'leverage', 10)
-        msg = (
-            f"{pair}\n"
-            f"\n"
-            f"Exchanges: Binance Futures\n"
-            f"{signal_type}\n"
-            f"Leverage: Cross ({leverage}X)\n"
-            f"\n"
-            f"Entry:\n"
-            f"{entry}\n"
-            f"\n"
-            f"Take-Profit Targets:\n"
-            f"1) {tp1}\n"
-            f"2) {tp2}\n"
-            f"3) {tp3}\n"
-            f"4) {tp4}\n"
-            f"\n"
-            f"Stop Targets:\n"
-            f"1) {sl}\n"
-            f"\n"
-            f"Trailing Configuration:\n"
-            f"Stop: Breakeven - Trigger: Target (1)"
-        )
-        return msg
-
-    def _format_human_signal(self, s: dict) -> str:
-        """Format signal for human readers with detailed analysis info"""
-        direction = s['direction']
-        strength = s['strength'] or 'STANDARD'
-
-        if direction == 'LONG':
-            dir_icon = '\U0001f7e2'
-            dir_label = 'LONG'
-            action = 'BUY / LONG'
-        else:
-            dir_icon = '\U0001f534'
-            dir_label = 'SHORT'
-            action = 'SELL / SHORT'
-
-        if strength == 'STRONG':
-            tier = '\U0001f525 STRONG (4H + 1H confirmed)'
-        else:
-            tier = '\U0001f50a STANDARD (1H only)'
-
-        rr1 = s['rr1']
-        rr2 = s.get('rr2', s['rr1'] * 1.33)
-        rr3 = s.get('rr3', s['rr1'] * 1.67)
-        rr_max = s['rr_max']
-        # 4-TP: Blended RR if all TPs hit: 40% at TP1 + 30% at TP2 + 20% at TP3 + 10% at TP4
-        blended_rr = round(rr1 * 0.40 + rr2 * 0.30 + rr3 * 0.20 + rr_max * 0.10, 2)
-
-        msg = (
-            f"<b>Signal Details</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"\n"
-            f"{dir_icon} <b>{s['symbol']}</b> | {dir_label}\n"
-            f"{tier}\n"
-            f"Action: <b>{action}</b>\n"
-            f"\n"
-            f"Entry: <code>{s['entry']}</code>\n"
-            f"Stop Loss: <code>{s['sl']}</code>\n"
-            f"TP1: <code>{s['tp1']}</code> (1:{rr1} RR, close 40%)\n"
-            f"TP2: <code>{s['tp2']}</code> (1:{rr2} RR, close 30%)\n"
-            f"TP3: <code>{s['tp3']}</code> (1:{rr3} RR, close 20%)\n"
-            f"TP4: <code>{s['tp4']}</code> (1:{rr_max} RR, close 10%)\n"
-            f"\n"
-            f"Blended RR (all TPs): 1:{blended_rr}\n"
-            f"SL moves to breakeven after TP1\n"
-            f"\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"RSI: {s['rsi']} | ADX: {s.get('adx', 'N/A')}\n"
-            f"Vol: {s['vol_ratio']}x | Score: {s['quality_score']}/100\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        return msg
-
-    def send_ema_crossover_alert(self, alert: dict) -> bool:
-        """Send informational EMA crossover alert (not a trade signal)."""
+    def send_signal_alert(self, alert: dict) -> bool:
+        """Send Supertrend signal alert (informational only)."""
         symbol = alert['symbol']
-        crossover_type = alert['crossover_type']
-        price = alert['price']
-        ema_fast = alert['ema_fast']
-        ema_slow = alert['ema_slow']
+        direction = alert['direction']
+        entry = alert['price']
+        sl = alert['sl']
+        tp = alert['tp']
+        rr = alert['rr']
+        ema200 = alert['ema200']
+        rsi = alert['rsi']
+        atr = alert['atr']
+        atr_pct = alert['atr_pct']
+        st_val = alert['supertrend_value']
         interval = alert.get('interval', '4h')
+        source = alert.get('source', 'unknown')
+        detected_at = alert.get('detected_at', '')
 
-        if crossover_type == 'GOLDEN_CROSS':
+        if direction == 'BUY':
             emoji = '\U0001f7e2'  # Green circle
-            direction = 'BULLISH CROSS'
-            description = f"{symbol} is crossing above the EMA"
+            label = 'BUY SIGNAL'
         else:
             emoji = '\U0001f534'  # Red circle
-            direction = 'BEARISH CROSS'
-            description = f"{symbol} is crossing below the EMA"
+            label = 'SELL SIGNAL'
+
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(detected_at)
+            display_time = dt.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            display_time = detected_at
 
         msg = (
-            f"<b>{emoji} EMA Crossover Alert</b>\n"
+            f"<b>{emoji} Supertrend Signal Alert</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"\n"
-            f"<b>{symbol}</b> | {direction}\n"
-            f"{description}\n"
+            f"<b>{symbol}</b> | {label}\n"
+            f"Supertrend flip on {interval.upper()} (ATR{self.config.supertrend_atr_period}/{self.config.supertrend_multiplier})\n"
             f"\n"
-            f"Price: <code>{price}</code>\n"
-            f"EMA{alert.get('ema_fast_period', 21)}: <code>{ema_fast}</code>\n"
-            f"EMA{alert.get('ema_slow_period', 55)}: <code>{ema_slow}</code>\n"
-            f"Timeframe: {interval.upper()}\n"
+            f"<b>Trade Plan</b>\n"
+            f"Entry: <code>{entry}</code>\n"
+            f"Stop Loss: <code>{sl}</code>\n"
+            f"Take Profit: <code>{tp}</code>\n"
+            f"R:R: <code>{rr}</code>\n"
+            f"\n"
+            f"<b>Filters</b>\n"
+            f"EMA{self.config.ema_filter_period}: <code>{ema200}</code>\n"
+            f"RSI{self.config.rsi_period}: <code>{rsi}</code>\n"
+            f"ATR: <code>{atr}</code> ({atr_pct}%)\n"
+            f"Supertrend: <code>{st_val}</code>\n"
+            f"Source: {source}\n"
+            f"\n"
+            f"Detected: {display_time}\n"
             f"\n"
             f"<i>This is for informational purposes only. Not a trade signal.</i>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━"
@@ -203,23 +101,16 @@ class TelegramBot:
         return self.send_message(msg, parse_mode='HTML')
 
     def send_startup_message(self):
-        msg = """\U0001f680 <b>Crypto Signal Bot Started</b>
+        msg = """\U0001f680 <b>Supertrend Scanner Started</b>
 
 Connected to Binance
-Scanning top 100 coins
-Timeframes: 1H + 4H
+Scanning top 100 by volume + top 100 by volatility
+Timeframe: 4H
+Strategy: Supertrend 12/3.5 + 200 EMA + RSI(14)
 Telegram alerts active
 
 Schedule:
-- 1H scan: every hour at :05
-- 4H trend update: every 4 hours
-- 15 min monitor: checks TP/SL
+- 4H scan: every hour at :05
 
-Signal tiers:
-\U0001f525 <b>STRONG</b> = 4H + 1H confirmed
-\U0001f50a <b>STANDARD</b> = 1H only
-
-Cornix auto-trading format enabled.
-
-Bot is live and watching the market."""
+Alerts are informational only — not trade signals."""
         self.send_message(msg)
