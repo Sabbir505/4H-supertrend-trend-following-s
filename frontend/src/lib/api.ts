@@ -16,7 +16,7 @@ export interface Signal {
   rr: number;
   interval: "4h";
   detected_at: string;
-  source: "volume" | "volatility" | "both";
+  source: "volume" | "marketcap" | "both";
   alerted: boolean;
 }
 

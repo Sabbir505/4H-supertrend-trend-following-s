@@ -15,7 +15,7 @@ import { getSignals, Signal } from "@/lib/api";
 import { formatPrice, formatTimestamp } from "@/lib/utils";
 
 const DIRECTION_OPTIONS = ["", "BUY", "SELL"] as const;
-const SOURCE_OPTIONS = ["", "volume", "volatility", "both"] as const;
+const SOURCE_OPTIONS = ["", "volume", "marketcap", "both"] as const;
 
 export default function SignalsPage() {
   const [signals, setSignals] = useState<Signal[]>([]);
@@ -326,7 +326,7 @@ export default function SignalsPage() {
                               className={`text-[10px] ${
                                 sig.source === "both"
                                   ? "border-purple-500/30 text-purple-400"
-                                  : sig.source === "volatility"
+                                  : sig.source === "marketcap"
                                   ? "border-amber-500/30 text-amber-400"
                                   : "border-blue-500/30 text-blue-400"
                               }`}

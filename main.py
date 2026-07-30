@@ -1,6 +1,6 @@
 """
 Supertrend Signal Scanner Bot
-Scans top 100 coins by volume and volatility for Supertrend (ATR 12, mult 3.5)
+Scans top 100 coins by volume and market cap for Supertrend (ATR 12, mult 3.5)
 flips on 4H timeframe, filtered by 200 EMA, RSI(14), and ATR% volatility range.
 Sends alerts to Telegram.
 """

@@ -21,6 +21,9 @@ class Config:
         # Binance (no API key needed for public market data)
         self.binance_base_url = "https://api.binance.com"
 
+        # CoinGecko (optional API key for higher rate limits)
+        self.coingecko_api_key = os.getenv("COINGECKO_API_KEY", "")
+
         # Scanner settings
         try:
             self.top_n_coins = int(os.getenv("TOP_N_COINS", "100"))
@@ -98,12 +101,6 @@ class Config:
         except ValueError:
             logger.warning("Invalid SIGNAL_COOLDOWN_HOURS, using default 4")
             self.signal_cooldown_hours = 4
-
-        try:
-            self.volatility_lookback = int(os.getenv("VOLATILITY_LOOKBACK", "14"))
-        except ValueError:
-            logger.warning("Invalid VOLATILITY_LOOKBACK, using default 14")
-            self.volatility_lookback = 14
 
         # Pairs excluded from trading (documented reasons)
         self.excluded_pairs = {

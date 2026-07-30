@@ -104,7 +104,7 @@ class TelegramBot:
         msg = """\U0001f680 <b>Supertrend Scanner Started</b>
 
 Connected to Binance
-Scanning top 100 by volume + top 100 by volatility
+Scanning top 100 by volume + top 100 by market cap
 Timeframe: 4H
 Strategy: Supertrend 12/3.5 + 200 EMA + RSI(14)
 Telegram alerts active

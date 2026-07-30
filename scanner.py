@@ -1,7 +1,7 @@
 """
-CryptoScanner — Fetches top 100 symbols by volume and volatility from Binance
-and detects Supertrend signals on the 4H timeframe with 200 EMA, RSI(14),
-and ATR% volatility filters.
+CryptoScanner — Fetches top 100 symbols by 24h volume (Binance) and top 100
+by market cap (CoinGecko) and detects Supertrend signals on the 4H timeframe
+with 200 EMA, RSI(14), and ATR% volatility filters.
 """
 
 import requests
@@ -22,6 +22,8 @@ class CryptoScanner:
         self._symbol_cache = []
         self._cache_time = 0
         self._cache_ttl = 3600  # Refresh symbol list every 1H
+        self._marketcap_cache = []
+        self._marketcap_cache_time = 0
         self._futures_symbols = None  # Cached futures symbol set
 
     def _get_futures_symbols(self) -> dict:
@@ -124,81 +126,80 @@ class CryptoScanner:
             logger.error(f"Failed to fetch symbols: {e}")
             return self._symbol_cache
 
-    def get_top_100_by_volatility(self) -> list:
+    def get_top_100_by_market_cap(self) -> list:
         """
-        Returns top 100 USDT pairs sorted by ATR volatility (highest first).
-        Uses 1D candles to calculate ATR(14) as percentage of price.
-        Excludes stablecoins and forex pairs.
+        Returns up to top_n_coins USDT pairs by CoinGecko market cap,
+        filtered to pairs that trade on Binance with a futures equivalent.
+        Results are cached for 1 hour to respect CoinGecko rate limits.
         """
+        now = time.time()
+        if self._marketcap_cache and (now - self._marketcap_cache_time) < self._cache_ttl:
+            return self._marketcap_cache
+
         try:
-            # Get all USDT tickers first
+            # Build set of valid Binance USDT pairs (with futures)
             url = f"{self.base_url}/api/v3/ticker/24hr"
             response = requests.get(url, timeout=15)
             response.raise_for_status()
             tickers = response.json()
 
-            valid_pairs = []
+            valid_symbols = set()
             for t in tickers:
                 symbol = t['symbol']
                 if self._is_valid_pair(symbol):
-                    try:
-                        last_price = float(t['lastPrice'])
-                        if last_price > 0:
-                            valid_pairs.append((symbol, last_price))
-                    except (ValueError, KeyError):
+                    valid_symbols.add(symbol)
+
+            # Fetch pages from CoinGecko until we have enough valid symbols
+            top_symbols = []
+            page = 1
+            max_pages = 4  # Safety cap (400 coins should cover >100 Binance futures pairs)
+
+            while len(top_symbols) < self.config.top_n_coins and page <= max_pages:
+                cg_url = "https://api.coingecko.com/api/v3/coins/markets"
+                params = {
+                    'vs_currency': 'usd',
+                    'order': 'market_cap_desc',
+                    'per_page': self.config.top_n_coins,
+                    'page': page,
+                }
+                if getattr(self.config, 'coingecko_api_key', None):
+                    params['x_cg_demo_api_key'] = self.config.coingecko_api_key
+
+                response = requests.get(cg_url, params=params, timeout=15)
+                response.raise_for_status()
+                coins = response.json()
+                if not coins:
+                    break
+
+                for coin in coins:
+                    base = coin.get('symbol', '').upper()
+                    if not base:
                         continue
+                    symbol = f"{base}USDT"
+                    if symbol in valid_symbols and symbol not in top_symbols:
+                        top_symbols.append(symbol)
+                        if len(top_symbols) >= self.config.top_n_coins:
+                            break
 
-            # Calculate volatility for each pair
-            volatility_data = []
-            lookback = self.config.volatility_lookback
+                page += 1
 
-            for symbol, last_price in valid_pairs:
-                try:
-                    df = self.fetch_candles(symbol, '1d', limit=max(lookback + 5, 20))
-                    if df is None or len(df) < lookback:
-                        continue
+            self._marketcap_cache = top_symbols[:self.config.top_n_coins]
+            self._marketcap_cache_time = now
 
-                    close = df['close']
-                    # Calculate ATR(14) as percentage of price for comparability
-                    high = df['high']
-                    low = df['low']
-                    prev_close = close.shift(1)
-                    tr = pd.concat([
-                        high - low,
-                        (high - prev_close).abs(),
-                        (low - prev_close).abs()
-                    ], axis=1).max(axis=1)
-                    atr = tr.ewm(com=lookback - 1, adjust=False).mean().iloc[-1]
-                    if atr <= 0 or last_price <= 0:
-                        continue
-                    volatility_pct = (atr / last_price) * 100
-                    volatility_data.append((symbol, volatility_pct, last_price))
-
-                    time.sleep(0.05)  # Rate limit protection
-
-                except Exception as e:
-                    logger.debug(f"Volatility calc error for {symbol}: {e}")
-                    continue
-
-            volatility_data.sort(key=lambda x: x[1], reverse=True)
-            top_symbols = [s[0] for s in volatility_data[:self.config.top_n_coins]]
-
-            if top_symbols:
-                logger.info(
-                    f"Top {len(top_symbols)} by volatility (range: "
-                    f"{volatility_data[0][1]:.2f}% - {volatility_data[-1][1]:.2f}%)"
-                )
-
-            return top_symbols
+            logger.info(
+                f"Market-cap list refreshed: {len(self._marketcap_cache)} symbols "
+                f"(scanned {min(page - 1, max_pages)} CoinGecko page(s))"
+            )
+            return self._marketcap_cache
 
         except Exception as e:
-            logger.error(f"Failed to fetch volatility symbols: {e}")
-            return []
+            logger.error(f"Failed to fetch market cap symbols: {e}")
+            return self._marketcap_cache
 
     def get_combined_symbols(self) -> list[str]:
-        """Get deduplicated list of volume top-100 and volatility top-100."""
+        """Get deduplicated list of volume top-100 and market-cap top-100."""
         volume_symbols = self.get_top_100_symbols()
-        volatility_symbols = self.get_top_100_by_volatility()
+        marketcap_symbols = self.get_top_100_by_market_cap()
 
         seen = set()
         combined = []
@@ -206,23 +207,23 @@ class CryptoScanner:
             if sym not in seen:
                 seen.add(sym)
                 combined.append(sym)
-        for sym in volatility_symbols:
+        for sym in marketcap_symbols:
             if sym not in seen:
                 seen.add(sym)
                 combined.append(sym)
 
         return combined
 
-    def _get_symbol_source(self, symbol: str, volume_list: list, volatility_list: list) -> str:
+    def _get_symbol_source(self, symbol: str, volume_list: list, marketcap_list: list) -> str:
         """Determine which scanner list(s) a symbol belongs to."""
         in_volume = symbol in volume_list
-        in_volatility = symbol in volatility_list
-        if in_volume and in_volatility:
+        in_marketcap = symbol in marketcap_list
+        if in_volume and in_marketcap:
             return "both"
         if in_volume:
             return "volume"
-        if in_volatility:
-            return "volatility"
+        if in_marketcap:
+            return "marketcap"
         return "unknown"
 
     # ─── Indicator helpers ──────────────────────────────────────────────────
@@ -350,7 +351,7 @@ class CryptoScanner:
         signals = []
 
         volume_list = self.get_top_100_symbols()
-        volatility_list = self.get_top_100_by_volatility()
+        marketcap_list = self.get_top_100_by_market_cap()
 
         ema_warmup = max(ema_period * 3, candle_limit)  # ensure enough history
         fetch_limit = max(candle_limit, ema_warmup)
@@ -421,7 +422,7 @@ class CryptoScanner:
                     'rr': rr_mult,
                     'interval': interval,
                     'detected_at': datetime.now(timezone.utc).isoformat(),
-                    'source': self._get_symbol_source(symbol, volume_list, volatility_list),
+                    'source': self._get_symbol_source(symbol, volume_list, marketcap_list),
                 })
 
                 time.sleep(0.1)  # Rate limit protection

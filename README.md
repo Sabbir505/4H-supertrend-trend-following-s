@@ -1,6 +1,6 @@
 # 🤖 TradeEdge — Crypto Signal Bot & Dashboard
 
-Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by ATR volatility for **Supertrend flips on the 4H timeframe**, filtered by a 200 EMA trend filter, RSI(14) momentum filter, and an ATR% volatility band. Each signal comes with a full RR-based trade plan (entry / SL / TP). Alerts go to Telegram; a Next.js dashboard shows everything live.
+Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by CoinGecko market cap for **Supertrend flips on the 4H timeframe**, filtered by a 200 EMA trend filter, RSI(14) momentum filter, and an ATR% volatility band. Each signal comes with a full RR-based trade plan (entry / SL / TP). Alerts go to Telegram; a Next.js dashboard shows everything live.
 
 ---
 
@@ -36,7 +36,7 @@ For a BUY (SELL mirrored):
 | RR multiplier | 1.5 × ATR | Trade plan sizing |
 
 - **Timeframe:** 4H
-- **Universe:** Top 100 by 24h quote volume + Top 100 by ATR volatility (merged, deduped)
+- **Universe:** Top 100 by 24h quote volume + Top 100 by CoinGecko market cap (merged, deduped)
 - **Cooldown:** 4 hours per (symbol, direction)
 - **Scan cadence:** hourly at :05 (overlap-safe; dedup suppresses repeats)
 
@@ -69,6 +69,9 @@ Edit `.env`:
 ```
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
 TELEGRAM_CHAT_ID=123456789
+
+# CoinGecko (optional — raises rate limits)
+COINGECKO_API_KEY=
 
 # Supertrend strategy (4H)
 SUPERTREND_ATR_PERIOD=12
@@ -142,6 +145,7 @@ Both pages auto-refresh every 30 seconds.
 Edit `.env` to adjust:
 - `TOP_N_COINS` — how many coins per universe (default: 100)
 - `MAX_SIGNALS_PER_SCAN` — max alerts per scan (default: 20)
+- `COINGECKO_API_KEY` — optional CoinGecko demo API key for higher rate limits
 - `SUPERTREND_ATR_PERIOD` / `SUPERTREND_MULTIPLIER` — Supertrend params (default: 12 / 3.5)
 - `EMA_FILTER_PERIOD` — trend filter EMA (default: 200)
 - `RSI_LONG_THRESHOLD` / `RSI_SHORT_THRESHOLD` — RSI gates (default: 55 / 45)

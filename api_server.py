@@ -83,7 +83,7 @@ class Signal(BaseModel):
     rr: float
     interval: str   # 4h
     detected_at: str
-    source: str     # volume | volatility | both
+    source: str     # volume | marketcap | both
     alerted: bool = False
 
 
