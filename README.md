@@ -6,7 +6,8 @@ Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by
 > generates *informational* signals and virtual (paper) trades. Futures
 > trading with leverage can liquidate your entire account. Past backtest
 > performance — including the numbers in [`backtest/REPORT.md`](backtest/REPORT.md)
-> — does not guarantee future results. Use at your own risk.
+> — does not guarantee future results. Use at your own risk. (The full
+> research report and methodology live in the author's private notes.)
 
 **Requirements:** Python 3.10+ (uses `X | Y` type hints), Node.js 18+ for the
 dashboard. All exchange interaction uses public Binance endpoints by default;

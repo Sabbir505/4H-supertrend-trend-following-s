@@ -38,3 +38,13 @@ frontend_web.log
 backtest/data_cache/
 frontend/.env.production
 *.bak
+
+# ─── Internal docs (kept private, not part of the OSS distribution) ─────
+/AI_CONTEXT.md
+/CLAUDE.md
+/DESIGN.md
+/PRODUCT.md
+/SYSTEM_DOCUMENTATION.md
+/TRADING_SYSTEM_ANALYSIS.md
+/ARCHITECTURE.md
+/backtest/REPORT.md
