@@ -27,6 +27,9 @@ def new_fig(title, subtitle, canvas_h=H):
     fig = plt.figure(figsize=(20, canvas_h * 0.2), facecolor=BG)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, W); ax.set_ylim(0, canvas_h)
+    ax.set_facecolor(BG)
+    ax.add_patch(plt.Rectangle((0, 0), W, canvas_h, fc=BG, ec="none",
+                 zorder=-10))
     ax.axis("off")
     ax.text(2.2, canvas_h - 2.4, title, color=TXT, fontsize=21,
             fontweight="bold", va="center")
@@ -280,7 +283,7 @@ arrow(ax, 17, 10.5, 17, 23.6, CY)
 ax.text(34, 8.9, "no exit -> trail ratchets -> repeat next candle",
         color=SUB, fontsize=9.5, style="italic", ha="center")
 
-box(ax, 4, 3, 94, 4.6, "3-year backtest exit mix (A/B signals, validated)",
+box(ax, 4, 4.5, 94, 4.6, "3-year backtest exit mix (A/B signals, validated)",
     ["trail/stop 71% of exits · time stop 26% (+0.47R avg, 85% win) · flip 3%  —  win rate 47%, profit factor 1.29-1.59"], EM)
 
 fig.savefig("docs/lifecycle.png", dpi=170, facecolor=BG)
