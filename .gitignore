@@ -28,3 +28,13 @@ api_output.log
 bot.lock
 __pycache__/
 *.pyc
+bot.log
+api_output.log
+backend_api.log
+frontend_web.log
+
+# ─── Private data: never publish ────────────────────────────────────────
+/data/
+backtest/data_cache/
+frontend/.env.production
+*.bak

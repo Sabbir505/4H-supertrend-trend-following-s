@@ -14,8 +14,9 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-SIGNALS_FILE = "signals.json"
-DATA_DIR = "data/signals"
+# Paths are env-overridable so the regression suite can sandbox them.
+SIGNALS_FILE = os.getenv("SIGNALS_FILE", "signals.json")
+DATA_DIR = os.getenv("SIGNALS_DATA_DIR", "data/signals")
 
 
 class SignalTracker:
@@ -44,15 +45,24 @@ class SignalTracker:
         return []
 
     def _save(self):
-        """Save signals to both flat file and split files."""
+        """Save signals atomically (tmp file + replace, so a crash mid-write
+        can never leave a truncated signals.json), then split files."""
+        tmp = SIGNALS_FILE + '.tmp'
+        saved = False
         for attempt in range(3):
             try:
-                with open(SIGNALS_FILE, 'w', encoding='utf-8') as f:
+                with open(tmp, 'w', encoding='utf-8') as f:
                     json.dump(self.signals, f, indent=2)
+                os.replace(tmp, SIGNALS_FILE)
+                saved = True
                 break
             except Exception as e:
                 logger.error(f"Save attempt {attempt+1} failed: {e}")
                 time.sleep(0.5 * attempt)
+
+        if not saved:
+            logger.critical(f"All 3 save attempts failed for signals.json — {len(self.signals)} signals at risk")
+            raise IOError(f"Failed to save signals after 3 attempts. Signals may be lost on restart.")
 
         self._save_to_split_files()
 
@@ -84,32 +94,66 @@ class SignalTracker:
             except Exception as e:
                 logger.warning(f"Failed to save split file {key}: {e}")
 
+    def _parse_utc(self, iso_str: str):
+        """Parse an ISO datetime string to a timezone-aware UTC datetime."""
+        try:
+            dt = datetime.fromisoformat(iso_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
     def _is_duplicate(self, signal: dict) -> bool:
-        """Check if a signal is a duplicate within the cooldown window.
-        Dedup key: (symbol, direction). Single timeframe so interval is not in the key.
+        """Check if a signal is a duplicate of an already-recorded one.
+
+        Signals carrying a 'candle_time' (the flip candle's close time) are
+        deduplicated by event: the same flip candle must never alert twice.
+
+        Other signals are deduplicated by (symbol, direction) within the
+        cooldown window.
         """
         symbol = signal['symbol']
         direction = signal['direction']
+
+        candle_time = signal.get('candle_time')
+        if candle_time:
+            for sig in self.signals:
+                if (
+                    sig.get('symbol') == symbol
+                    and sig.get('direction') == direction
+                    and sig.get('candle_time') == candle_time
+                ):
+                    # A recorded but never-alerted signal means the Telegram
+                    # send failed — allow the retry instead of suppressing it.
+                    if sig.get('alerted', False):
+                        logger.debug(
+                            f"Dup: {symbol} {direction} — candle "
+                            f"{candle_time} already alerted"
+                        )
+                        return True
+                    logger.info(
+                        f"Retry: {symbol} {direction} candle {candle_time} "
+                        f"recorded but never alerted"
+                    )
+                    return False
+
         cooldown_hours = self.config.signal_cooldown_hours
 
-        try:
-            detected_at = datetime.fromisoformat(signal['detected_at'])
-        except (ValueError, TypeError):
+        detected_at = self._parse_utc(signal.get('detected_at', ''))
+        if detected_at is None:
             return False
 
         cutoff = detected_at - timedelta(hours=cooldown_hours)
 
         for sig in self.signals:
-            if sig['symbol'] != symbol:
+            if sig.get('symbol') != symbol:
                 continue
-            if sig['direction'] != direction:
+            if sig.get('direction') != direction:
                 continue
-            try:
-                existing_dt = datetime.fromisoformat(sig['detected_at'])
-                if existing_dt >= cutoff:
-                    return True
-            except (ValueError, TypeError):
-                continue
+            existing_dt = self._parse_utc(sig.get('detected_at', ''))
+            if existing_dt is not None and existing_dt >= cutoff:
+                return True
 
         return False
 
@@ -137,6 +181,27 @@ class SignalTracker:
         if 'alerted' not in signal:
             signal['alerted'] = False
 
+        # Retry path: a recorded-but-unalerted row for the same flip candle
+        # means the previous Telegram send failed. Replace it in place
+        # (keeping its id, so positions referencing entry_signal_id stay
+        # resolvable) instead of appending a duplicate row.
+        candle_time = signal.get('candle_time')
+        if candle_time:
+            for i, sig in enumerate(self.signals):
+                if (sig.get('symbol') == signal['symbol']
+                        and sig.get('direction') == signal['direction']
+                        and sig.get('candle_time') == candle_time
+                        and not sig.get('alerted', False)):
+                    signal['id'] = sig.get('id', signal['id'])
+                    self.signals[i] = signal
+                    self._save()
+                    logger.info(
+                        f"Retry recorded: {signal['symbol']} "
+                        f"{signal['direction']} ({signal['interval']}) "
+                        f"@ {signal['price']}"
+                    )
+                    return True
+
         self.signals.append(signal)
         self._save()
         logger.info(
@@ -157,12 +222,9 @@ class SignalTracker:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         recent = []
         for sig in self.signals:
-            try:
-                dt = datetime.fromisoformat(sig['detected_at'])
-                if dt >= cutoff:
-                    recent.append(sig)
-            except (ValueError, TypeError):
-                continue
+            dt = self._parse_utc(sig.get('detected_at', ''))
+            if dt is not None and dt >= cutoff:
+                recent.append(sig)
         return recent
 
     def get_all(self) -> list:

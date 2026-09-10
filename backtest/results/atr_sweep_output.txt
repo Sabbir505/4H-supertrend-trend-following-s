@@ -1,0 +1,32 @@
+========================================================================
+ATR% floor sweep — 4H production strategy (baseline_4h)
+========================================================================
+
+--- atr_min = 0.5% (atr_max = 5.0%) ---
+  [train] FAILED: run() got an unexpected keyword argument 'notes'
+  [valid] FAILED: run() got an unexpected keyword argument 'notes'
+  [full] FAILED: run() got an unexpected keyword argument 'notes'
+
+--- atr_min = 0.8% (atr_max = 5.0%) ---
+  [train] FAILED: run() got an unexpected keyword argument 'notes'
+  [valid] FAILED: run() got an unexpected keyword argument 'notes'
+  [full] FAILED: run() got an unexpected keyword argument 'notes'
+
+--- atr_min = 1.0% (atr_max = 5.0%) ---
+  [train] FAILED: run() got an unexpected keyword argument 'notes'
+  [valid] FAILED: run() got an unexpected keyword argument 'notes'
+  [full] FAILED: run() got an unexpected keyword argument 'notes'
+
+--- atr_min = 1.2% (atr_max = 5.0%) ---
+  [train] FAILED: run() got an unexpected keyword argument 'notes'
+  [valid] FAILED: run() got an unexpected keyword argument 'notes'
+  [full] FAILED: run() got an unexpected keyword argument 'notes'
+
+--- atr_min = 1.5% (atr_max = 5.0%) ---
+  [train] FAILED: run() got an unexpected keyword argument 'notes'
+  [valid] FAILED: run() got an unexpected keyword argument 'notes'
+  [full] FAILED: run() got an unexpected keyword argument 'notes'
+
+========================================================================
+Sweep complete. Results appended to backtest/experiments/experiments.csv
+========================================================================

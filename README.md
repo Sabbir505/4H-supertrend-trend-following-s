@@ -1,27 +1,36 @@
 # 🤖 TradeEdge — Crypto Signal Bot & Dashboard
 
-Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by CoinGecko market cap for **Supertrend flips on the 4H timeframe**, filtered by a 200 EMA trend filter, RSI(14) momentum filter, and an ATR% volatility band. Each signal comes with a full RR-based trade plan (entry / SL / TP). Alerts go to Telegram; a Next.js dashboard shows everything live.
+Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by CoinGecko market cap for **4H Supertrend trend-ride entries**, filtered by EMA200 trend direction and market breadth. Each signal is managed with a 5×ATR initial stop, 3.5×ATR trailing stop, and 42-bar time stop. Alerts go to Telegram; a Next.js dashboard shows everything live.
+
+> **⚠️ Not financial advice.** This is research/educational software that
+> generates *informational* signals and virtual (paper) trades. Futures
+> trading with leverage can liquidate your entire account. Past backtest
+> performance — including the numbers in [`backtest/REPORT.md`](backtest/REPORT.md)
+> — does not guarantee future results. Use at your own risk.
+
+**Requirements:** Python 3.10+ (uses `X | Y` type hints), Node.js 18+ for the
+dashboard. All exchange interaction uses public Binance endpoints by default;
+live execution is off unless explicitly enabled (`EXECUTION_MODE`).
 
 ---
 
 ## 📡 Signal Definition
 
-A signal fires on the just-closed 4H candle when **all** of these are true:
+A signal fires on the **confirmed** 4H candle when **all** of these are true:
 
-| Direction | Supertrend flip | 200 EMA | RSI(14) | ATR% range |
-|-----------|-----------------|---------|---------|------------|
-| **BUY** | bearish → bullish | price > EMA200 | RSI > 55 | 0.5% – 5.0% |
-| **SELL** | bullish → bearish | price < EMA200 | RSI < 45 | 0.5% – 5.0% |
+| Direction | Supertrend flip | EMA filter | Breadth | ATR% range |
+|-----------|----------------|-----------|---------|------------|
+| **BUY** | bearish → bullish | price > EMA200 | ≥ 0.30 | 0.5% – 5.0% |
+| **SELL** | bullish → bearish | BTC Supertrend bearish | ≥ 0.30 | 0.5% – 5.0% |
 
-### Trade Plan (per signal, RR-based)
+### Position Plan (per signal)
 
 For a BUY (SELL mirrored):
 - `entry` = current close
-- `atr` = ATR(12) at signal candle
-- `sl` = entry − 1.5 × atr
-- `tp` = entry + 1.5 × atr
-- `rr` = 1.5
-- `supertrend_value` = Supertrend line at signal candle
+- `initial_stop` = entry − 5 × ATR
+- `risk_pct` = breadth-scaled (full 0.5% or half 0.25%)
+- `trail` = 3.5 × ATR chandelier that ratchets from the initial stop as closes advance
+- `time_stop` = 42 bars (≈ 7 days)
 
 ---
 
@@ -29,16 +38,19 @@ For a BUY (SELL mirrored):
 
 | Indicator | Settings | Role |
 |-----------|----------|------|
-| Supertrend | ATR 12, multiplier 3.5 | Flip trigger |
-| EMA 200 | — | Trend filter |
-| RSI 14 | Long > 55, Short < 45 | Momentum filter |
+| Supertrend | ATR 10, multiplier 3.5 | Flip trigger |
+| EMA 200 | — | Trend filter (longs); BTC-regime gate (shorts) |
+| Market breadth | ≥ 30% above 200MA | Risk-size scaler |
 | ATR % | 0.5% – 5.0% of price | Volatility filter |
-| RR multiplier | 1.5 × ATR | Trade plan sizing |
+| Initial stop | 5 × ATR | Max loss per trade |
+| Trailing stop | 3.5 × ATR | Lock gains |
+| Time stop | 42 bars | Hard exit ceiling |
 
 - **Timeframe:** 4H
 - **Universe:** Top 100 by 24h quote volume + Top 100 by CoinGecko market cap (merged, deduped)
 - **Cooldown:** 4 hours per (symbol, direction)
 - **Scan cadence:** hourly at :05 (overlap-safe; dedup suppresses repeats)
+- **Max open positions:** 10
 
 ---
 
@@ -74,16 +86,17 @@ TELEGRAM_CHAT_ID=123456789
 COINGECKO_API_KEY=
 
 # Supertrend strategy (4H)
-SUPERTREND_ATR_PERIOD=12
+SUPERTREND_ATR_PERIOD=10
 SUPERTREND_MULTIPLIER=3.5
 EMA_FILTER_PERIOD=200
-RSI_PERIOD=14
-RSI_LONG_THRESHOLD=55
-RSI_SHORT_THRESHOLD=45
-MIN_ATR_PCT=0.5
-MAX_ATR_PCT=5.0
-RR_MULTIPLIER=1.5
+TRAIL_ATR_MULT=3.5
+INITIAL_STOP_ATR_MULT=5.0
+TIME_STOP_BARS=42
+BREADTH_THRESHOLD=0.3
+ATR_MIN_PCT=0.5
+ATR_MAX_PCT=5.0
 SCAN_TIMEFRAME=4h
+CANDLE_FETCH_LIMIT=600
 SIGNAL_COOLDOWN_HOURS=4
 ```
 
@@ -92,32 +105,43 @@ SIGNAL_COOLDOWN_HOURS=4
 python main.py
 ```
 This starts:
-- Scanner scheduler (4H scan every hour at :05)
+- Scanner scheduler (4H scan every hour at :05) + watchdog thread
 - FastAPI backend server on `http://localhost:8001`
-- Next.js frontend dev server on `http://localhost:3001`
+
+### 6. Run the frontend
+```bash
+cd frontend && npm run dev
+```
+Frontend at `http://localhost:3000`.
 
 ---
 
 ## 📁 File Structure
 
 ```
-D:\Main project\files\
-├── main.py                    # Scheduler + orchestration + servers
-├── api_server.py              # FastAPI REST API
-├── config.py                  # Settings management (.env)
-├── scanner.py                 # Binance API + Supertrend + filters
+D:\projects\trading\4H-1H-Trading-Algo\
+├── main.py                    # Bot entry: scheduler + watchdog + API lifecycle
+├── api_server.py              # FastAPI REST API (mtime cache, health, pagination)
+├── scanner.py                 # Binance + CoinGecko + Supertrend + EMA + breadth
+├── position_tracker.py        # Virtual position management (trail, time, flip exits)
 ├── signal_tracker.py          # Signal persistence & dedup
-├── telegram_bot.py            # Telegram alerts
+├── telegram_bot.py            # Signal, error, orphan + weekly digest
+├── config.py                  # Settings management (.env)
 ├── signals.json               # Signal database (live)
 ├── data/
-│   └── signals/               # Live weekly archives by year/month/week
+│   ├── signals/               # Weekly archives by year/month/week
+│   ├── trades.json            # Closed virtual trade log
+│   └── positions.json         # Open virtual positions
 └── frontend/                  # Next.js dashboard
     ├── src/
-    │   ├── app/               # Pages (dashboard, signals)
-    │   ├── lib/               # API client, utilities
-    │   └── components/        # React components, sidebar, layout
-    ├── next.config.ts
-    └── package.json
+    │   ├── app/
+    │   │   ├── dashboard/page.tsx
+    │   │   ├── signals/page.tsx
+    │   │   └── status/page.tsx
+    │   └── lib/
+    │       ├── api.ts
+    │       └── utils.ts
+    └── next.config.ts
 ```
 
 ---
@@ -126,6 +150,8 @@ D:\Main project\files\
 
 - **Every hour at :05** → 4H Supertrend scan (overlap-safe; dedup suppresses repeats within the 4h cooldown)
 - **Startup** → one immediate 4H scan
+- **Mondays 09:00 UTC** → weekly Telegram digest (win rate, avg R, profit factor)
+- **Every 15 min** → position tracker update (trailing stop, time stop, flip exits)
 
 ---
 
@@ -134,9 +160,10 @@ D:\Main project\files\
 | Page | Route | Description |
 |------|-------|-------------|
 | **Dashboard** | `/dashboard` | Stat cards (total / 24h / buy / sell), hourly bar chart, buy-vs-sell pie, recent signals |
-| **Signals** | `/signals` | Filterable table: symbol, direction, entry, SL, TP, RSI, ATR%, EMA200, Supertrend, source, timestamp |
+| **Signals** | `/signals` | Filterable table: symbol, direction, entry, SL, Risk %, ATR%, source, timestamp |
+| **Status** | `/status` | Scanner heartbeat (scan freshness) + open virtual positions |
 
-Both pages auto-refresh every 30 seconds.
+All pages auto-refresh every 30 seconds.
 
 ---
 
@@ -146,11 +173,18 @@ Edit `.env` to adjust:
 - `TOP_N_COINS` — how many coins per universe (default: 100)
 - `MAX_SIGNALS_PER_SCAN` — max alerts per scan (default: 20)
 - `COINGECKO_API_KEY` — optional CoinGecko demo API key for higher rate limits
-- `SUPERTREND_ATR_PERIOD` / `SUPERTREND_MULTIPLIER` — Supertrend params (default: 12 / 3.5)
+- `SUPERTREND_ATR_PERIOD` / `SUPERTREND_MULTIPLIER` — Supertrend params (default: 10 / 3.5)
 - `EMA_FILTER_PERIOD` — trend filter EMA (default: 200)
-- `RSI_LONG_THRESHOLD` / `RSI_SHORT_THRESHOLD` — RSI gates (default: 55 / 45)
-- `MIN_ATR_PCT` / `MAX_ATR_PCT` — volatility band (default: 0.5 / 5.0)
-- `RR_MULTIPLIER` — TP/SL distance in ATR (default: 1.5)
+- `ATR_MIN_PCT` / `ATR_MAX_PCT` — volatility band (default: 0.5 / 5.0)
+- `TRAIL_ATR_MULT` — trailing stop distance in ATR multiples (default: 3.5)
+- `INITIAL_STOP_ATR_MULT` — initial stop distance in ATR multiples (default: 5.0)
+- `TIME_STOP_BARS` — hard exit ceiling (default: 42 bars ≈ 7 days)
+- `BREADTH_THRESHOLD` — min breadth to use full risk size (default: 0.30)
+- `BREADTH_GATE` — no entries at all below this breadth floor (default: 0.15)
+- `SKIP_SUNDAY_ENTRIES` — skip flip candles opening on Sunday (default: true)
+- `MAX_OPEN_POSITIONS` — portfolio cap (default: 10)
+- `RISK_PCT_FULL` / `RISK_PCT_HALF` — per-trade risk by regime (set: 0.5% / 0.25%; halved after 3-year drawdown validation)
+- `EXECUTION_MODE` — off / dry / live futures execution (see SYSTEM_DOCUMENTATION §7b; dry by default, leverage capped at 5x, isolated margin, `EXECUTION_MAX_POSITIONS=15`)
 - `SIGNAL_COOLDOWN_HOURS` — dedup window (default: 4)
 
 ---
@@ -168,3 +202,10 @@ Edit `.env` to adjust:
 ## ⚠️ Disclaimer
 
 This bot is for informational purposes only. Not financial advice. Always do your own research and manage your risk.
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) — © 2026 Sabbir Hossain. Signals are informational; you are
+responsible for anything you trade.
