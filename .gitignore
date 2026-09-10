@@ -48,3 +48,6 @@ frontend/.env.production
 /TRADING_SYSTEM_ANALYSIS.md
 /ARCHITECTURE.md
 /backtest/REPORT.md
+/frontend/AGENTS.md
+/frontend/CLAUDE.md
+/frontend/prd.md
