@@ -19,84 +19,21 @@ live execution is off unless explicitly enabled (`EXECUTION_MODE`).
 
 ### System architecture
 
-```mermaid
-flowchart LR
-    subgraph SCAN["Every 4H scan - 00:05, 04:05, 08:05 ... UTC"]
-        direction TB
-        SCH["main.py scheduler + watchdog"] --> UNI["Universe: Binance top-100 by volume + CoinGecko top-100 by market cap"]
-        UNI --> FE["Fetch ~600 closed 4H candles per symbol"]
-        FE --> IND["Supertrend(10, 3.5) · EMA200 · ATR · market breadth · BTC regime"]
-    end
-
-    IND --> EXIT
-    IND --> ENTRY
-
-    subgraph MANAGE["Exits first - then entries"]
-        direction TB
-        EXIT["PositionTracker: causal bar-by-bar replay"] -->|"stop / flip / time hit"| XIT["exit event"]
-        EXIT -->|"no exit"| RAT["ratchet chandelier trail"]
-        ENTRY["check_entries: gates + quality tier A-D"] --> SIG["SignalTracker: dedup + archive"]
-        SIG --> OPEN["open virtual position (cap 15)"]
-    end
-
-    XIT --> TGA["Telegram exit alert"]
-    OPEN --> TGE["Telegram entry alert"]
-
-    OPEN --> EXEC
-    XIT --> EXC
-
-    subgraph LIVE["Live execution - optional, EXECUTION_MODE"]
-        EXEC["FuturesExecutor: 5x isolated · cap 15 · $5 notional"] -->|"MARKET entry + STOP_MARKET trail"| BNC["Binance USDT-M futures"]
-        EXC -->|"reduce-only close"| BNC
-    end
-
-    SIG --> J[(data/signals JSON)]
-    OPEN --> J2[(data/positions + trade history JSON)]
-    J --> API["FastAPI :8001"]
-    J2 --> API
-    API --> DASH["Next.js dashboard :3000"]
-```
+<p align="center">
+  <img src="docs/architecture.png" alt="TradeEdge system flow" width="100%">
+</p>
 
 ### Entry decision pipeline
 
-```mermaid
-flowchart TD
-    A["4H candle closes"] --> B{"Supertrend flip?"}
-    B -->|"no"| OUT["skip"]
-    B -->|"yes"| C{"ATR% within 0.5 - 5.0?"}
-    C -->|"no"| OUT
-    C -->|"yes"| D{"flip candle opens on Sunday?"}
-    D -->|"yes"| OUT
-    D -->|"no"| E{"direction"}
-    E -->|"LONG"| F{"close above EMA200?"}
-    E -->|"SHORT"| G{"BTC Supertrend bearish?"}
-    F -->|"no"| OUT
-    G -->|"no"| OUT
-    F -->|"yes"| H{"market breadth >= 0.15?"}
-    G -->|"yes"| H
-    H -->|"no"| OUT
-    H -->|"yes"| I{"quality tier (direction x breadth x symbol)"}
-    I -->|"LONG with breadth >= 0.3 = A"| K["TAKE - full risk 0.5%"]
-    I -->|"SHORT with breadth < 0.3 or >= 0.5 = B"| K2["TAKE - breadth-scaled risk"]
-    I -->|"low-breadth long / mid-breadth short = C"| OUT2["skipped (QUALITY_FILTER)"]
-    I -->|"short on BTC = D"| OUT2
-```
+<p align="center">
+  <img src="docs/pipeline.png" alt="Entry decision pipeline" width="80%">
+</p>
 
 ### Position lifecycle
 
-```mermaid
-flowchart TD
-    E0["flip candle closes"] --> E1["enter at next candle open - exchange stop at initial stop (5xATR)"]
-    E1 --> E2["each closed 4H candle:"]
-    E2 --> S1{"low/high touches the trail stop?"}
-    S1 -->|"yes"| X1["EXIT - trail / stop"]
-    S1 -->|"no"| S2{"opposite Supertrend flip?"}
-    S2 -->|"yes"| X2["EXIT at next open - flip"]
-    S2 -->|"no"| S3{"held 42 bars (7 days)?"}
-    S3 -->|"yes"| X3["EXIT at close - time stop"]
-    S3 -->|"no"| S4["ratchet trail: close + or - 3.5xATR"]
-    S4 --> E2
-```
+<p align="center">
+  <img src="docs/lifecycle.png" alt="Position lifecycle" width="90%">
+</p>
 
 Risk sizing is an overlay on both directions: **full risk (0.5%)** when market
 breadth ≥ 0.30, **half risk (0.25%)** below it. Costs are modeled at 0.16%
