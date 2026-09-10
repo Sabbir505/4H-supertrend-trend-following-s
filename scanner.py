@@ -518,7 +518,7 @@ class CryptoScanner:
                 'btc_dir': btc_dir,
                 'quality': quality,
                 'quality_reason': quality_reason,
-                # Same floor the tracker/engine apply: max(5xATR, 2% of
+                # Same floor the tracker/engine apply: max(INITIAL_STOP_ATR_MULT xATR, 2% of
                 # price). Without it the alerted stop is wider than the one
                 # actually enforced whenever ATR% < 0.4.
                 'initial_stop': round(close_i - (1 if direction == 'BUY' else -1)

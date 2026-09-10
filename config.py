@@ -41,7 +41,7 @@ class Config:
 
         # ─── 4H Supertrend trend-riding strategy (backtest round-4 final) ───
         # Entry: ST flip; longs close > EMA200; shorts only when BTC ST is bearish.
-        # Management: 3.5xATR chandelier trail (initial stop 5xATR), exit on
+        # Management: 3.5xATR chandelier trail (initial stop 3xATR in prod), exit on
         # opposite flip or after TIME_STOP_BARS bars; breadth-scaled risk.
         try:
             self.supertrend_atr_period = int(os.getenv("SUPERTREND_ATR_PERIOD", "10"))
@@ -68,10 +68,10 @@ class Config:
             self.trail_atr_mult = 3.5
 
         try:
-            self.initial_stop_atr_mult = float(os.getenv("INITIAL_STOP_ATR_MULT", "5.0"))
+            self.initial_stop_atr_mult = float(os.getenv("INITIAL_STOP_ATR_MULT", "3.0"))
         except ValueError:
-            logger.warning("Invalid INITIAL_STOP_ATR_MULT, using default 5.0")
-            self.initial_stop_atr_mult = 5.0
+            logger.warning("Invalid INITIAL_STOP_ATR_MULT, using default 3.0")
+            self.initial_stop_atr_mult = 3.0
 
         try:
             self.atr_min_pct = float(os.getenv("ATR_MIN_PCT", "0.4"))

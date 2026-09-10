@@ -1,13 +1,13 @@
 {
   "generated_at": "2026-09-10T17:00:44.340032+00:00",
   "config": {
-    "name": "4H Supertrend Trend-Ride v2.1 (round-5b deployed)",
+    "name": "4H Supertrend Trend-Ride v2.2 (round-5d deployed)",
     "params": {
       "supertrend": "ATR 10 / x3.5",
       "long_gate": "close > EMA200",
       "short_gate": "BTC Supertrend(10,3.5) bearish",
       "exit": "3.5xATR chandelier trail \u00b7 opposite flip \u00b7 42-bar time stop",
-      "initial_stop": "5xATR (min 2%)",
+      "initial_stop": "3xATR (min 2%)",
       "atr_band": "0.5% - 5.0%",
       "sunday_skip": "flip candles opening on Sunday are skipped",
       "breadth_gate": "no entries when market breadth < 0.15",

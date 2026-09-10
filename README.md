@@ -1,6 +1,6 @@
 # 🤖 TradeEdge — Crypto Signal Bot & Dashboard
 
-Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by CoinGecko market cap for **4H Supertrend trend-ride entries**, filtered by EMA200 trend direction and market breadth. Each signal is managed with a 5×ATR initial stop, 3.5×ATR trailing stop, and 42-bar time stop. Alerts go to Telegram; a Next.js dashboard shows everything live.
+Automated cryptocurrency signal scanner. Scans the top 100 Binance USDT pairs by 24h volume and top 100 by CoinGecko market cap for **4H Supertrend trend-ride entries**, filtered by EMA200 trend direction and market breadth. Each signal is managed with a 3×ATR initial stop, 3.5×ATR trailing stop, and 42-bar time stop. Alerts go to Telegram; a Next.js dashboard shows everything live.
 
 > **⚠️ Not financial advice.** This is research/educational software that
 > generates *informational* signals and virtual (paper) trades. Futures
@@ -55,7 +55,7 @@ A signal fires on the **confirmed** 4H candle when **all** of these are true:
 
 For a BUY (SELL mirrored):
 - `entry` = current close
-- `initial_stop` = entry − 5 × ATR
+- `initial_stop` = entry − 3 × ATR
 - `risk_pct` = breadth-scaled (full 0.5% or half 0.25%)
 - `trail` = 3.5 × ATR chandelier that ratchets from the initial stop as closes advance
 - `time_stop` = 42 bars (≈ 7 days)
@@ -70,7 +70,7 @@ For a BUY (SELL mirrored):
 | EMA 200 | — | Trend filter (longs); BTC-regime gate (shorts) |
 | Market breadth | ≥ 30% above 200MA | Risk-size scaler |
 | ATR % | 0.5% – 5.0% of price | Volatility filter |
-| Initial stop | 5 × ATR | Max loss per trade |
+| Initial stop | 3 × ATR | Max loss per trade |
 | Trailing stop | 3.5 × ATR | Lock gains |
 | Time stop | 42 bars | Hard exit ceiling |
 
@@ -118,7 +118,7 @@ SUPERTREND_ATR_PERIOD=10
 SUPERTREND_MULTIPLIER=3.5
 EMA_FILTER_PERIOD=200
 TRAIL_ATR_MULT=3.5
-INITIAL_STOP_ATR_MULT=5.0
+INITIAL_STOP_ATR_MULT=3.0
 TIME_STOP_BARS=42
 BREADTH_THRESHOLD=0.3
 ATR_MIN_PCT=0.5
@@ -205,7 +205,7 @@ Edit `.env` to adjust:
 - `EMA_FILTER_PERIOD` — trend filter EMA (default: 200)
 - `ATR_MIN_PCT` / `ATR_MAX_PCT` — volatility band (default: 0.5 / 5.0)
 - `TRAIL_ATR_MULT` — trailing stop distance in ATR multiples (default: 3.5)
-- `INITIAL_STOP_ATR_MULT` — initial stop distance in ATR multiples (default: 5.0)
+- `INITIAL_STOP_ATR_MULT` — initial stop distance in ATR multiples (set: 3.0)
 - `TIME_STOP_BARS` — hard exit ceiling (default: 42 bars ≈ 7 days)
 - `BREADTH_THRESHOLD` — min breadth to use full risk size (default: 0.30)
 - `BREADTH_GATE` — no entries at all below this breadth floor (default: 0.15)

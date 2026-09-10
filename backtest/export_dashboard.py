@@ -128,7 +128,7 @@ def main():
                 'long_gate': 'close > EMA200',
                 'short_gate': 'BTC Supertrend(10,3.5) bearish',
                 'exit': '3.5xATR chandelier trail · opposite flip · 42-bar time stop',
-                'initial_stop': '5xATR',
+                'initial_stop': '3xATR (min 2%)',
                 'risk': '1% equity per trade — full when breadth >= 0.3, half below',
                 'universe': 'top-100 volume + top-100 market cap (166 symbols)',
                 'period': '2026-03-01 to 2026-08-31',

@@ -2,7 +2,7 @@
 Virtual position tracker for the 4H Supertrend trend-ride strategy.
 
 Mirrors the backtest engine's exit logic exactly (closed candles only):
-  - stop: chandelier trail (initial stop 5xATR at entry, ratcheting by
+  - stop: chandelier trail (initial stop INITIAL_STOP_ATR_MULT xATR at entry, ratcheting by
     close - 3.5xATR_entry), checked against each bar's low/high
   - flip: opposite Supertrend flip on a closed candle -> exit at next open
   - time: 42 bars (7 days) after entry -> exit at that bar's close

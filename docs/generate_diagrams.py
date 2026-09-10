@@ -139,7 +139,7 @@ y = box(ax, 52, PTOP - 3.5, 19, 6.6, "Breadth-scaled risk",
          "no signals removed"], AM)
 varrow(ax, 61.5, y, y - 1.4, AM)
 y = box(ax, 52, y - 1.4, 19, 7.6, "Position plan",
-        ["entry at next bar open", "initial stop 5xATR (min 2%)",
+        ["entry at next bar open", "initial stop 3xATR (min 2%)",
          "chandelier trail 3.5xATR", "time stop 42 bars (7 days)"], AM)
 varrow(ax, 61.5, y, y - 1.4, AM)
 y = box(ax, 52, y - 1.4, 19, 6.6, "Virtual positions",
@@ -260,7 +260,7 @@ fig, ax = new_fig("Position lifecycle",
 
 box(ax, 4, 31.8, 26, 8.2, "ENTRY",
     ["flip candle closes -> enter at next", "candle open (MARKET)",
-     "exchange STOP at initial stop 5xATR", "(min 2%) - risk 0.5% / 0.25%"], CY)
+     "exchange STOP at initial stop 3xATR", "(min 2%) - risk 0.5% / 0.25%"], CY)
 box(ax, 36, 31.8, 30, 8.2, "EACH CLOSED 4H CANDLE, IN ORDER",
     ["1  low/high touches the trail stop ?", "2  opposite Supertrend flip ?",
      "3  held 42 bars (7 days) ?", "4  ratchet trail: close -/+ 3.5xATR"], VI)
