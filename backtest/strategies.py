@@ -151,13 +151,16 @@ def st_trail(df, p):
     flip_short &= conds_s
 
     plans = []
+    init_mult = p.get("init_mult", 5)      # initial stop in ATRs (default 5x)
+    init_floor = p.get("init_floor", 0.02)  # min stop distance as price fraction
     for i in np.flatnonzero((flip_long | flip_short).to_numpy()):
         af = _atr_frac(df, a, i)
         if np.isnan(af) or af <= 0:
             continue
         plans.append(engine.TradePlan(
             idx=int(i), direction=1 if flip_long.iat[i] else -1,
-            sl_frac=max(5 * af, 0.02), tp_frac=None, exit_mode='trail',
+            sl_frac=max(init_mult * af, init_floor), tp_frac=None,
+            exit_mode='trail',
             trail_mult=p['trail_mult'], atr_entry=a.iat[i],
             time_stop_bars=p.get('time_stop_bars'),
             breakeven_at_r=p.get('breakeven_at_r'),
