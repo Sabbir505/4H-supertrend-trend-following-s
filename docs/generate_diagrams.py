@@ -185,9 +185,9 @@ print("architecture.png done")
 
 # ── 2. ENTRY PIPELINE ────────────────────────────────────────────────────
 
-PH = 66
+PH = 74
 fig, ax = new_fig("Entry decision pipeline",
-                  "every gate must pass",
+                  "every gate must pass - closed 4H candles only",
                   canvas_h=PH)
 
 CX = 32
@@ -197,50 +197,54 @@ def gate(cx, cy, text, accent=VI, w=26, h=5.4):
     diamond(ax, cx, cy, w, h, text, accent)
 
 NL = chr(10)
-gate(CX, 60, "4H candle closes with a Supertrend flip ?", CY, w=30)
-varrow(ax, CX, 57.3, 55.9)
-gate(CX, 52.5, "ATR% within 0.5 - 5.0 ?")
-harrow(ax, CX + 13, RAIL, 52.5, RD)
-ax.text(70, 53.3, "no", color=RD, fontsize=8.5, style="italic")
-varrow(ax, CX, 49.8, 48.4)
-gate(CX, 45, "flip candle opens on Sunday ?")
-harrow(ax, CX + 13, RAIL, 45, RD)
-ax.text(70, 45.8, "yes", color=RD, fontsize=8.5, style="italic")
-varrow(ax, CX, 42.3, 41.1)
-gate(CX, 37.5, "direction of the flip", CY, w=22, h=5)
+gate(CX, 66, "4H candle closes with a Supertrend flip ?", CY, w=30)
+varrow(ax, CX, 63.3, 61.9)
+gate(CX, 58.5, "ATR% within 0.5 - 5.0 ?")
+harrow(ax, CX + 13, RAIL, 58.5, RD)
+ax.text(70, 59.3, "no", color=RD, fontsize=8.5, style="italic")
+varrow(ax, CX, 55.8, 54.4)
+gate(CX, 51, "flip candle opens on Sunday ?")
+harrow(ax, CX + 13, RAIL, 51, RD)
+ax.text(70, 51.8, "yes", color=RD, fontsize=8.5, style="italic")
+varrow(ax, CX, 48.3, 47.1)
+gate(CX, 44, "direction of the flip", CY, w=22, h=5)
 
-line(ax, CX - 11, 37.5, 16, 37.5); line(ax, 16, 37.5, 16, 33.1)
-varrow(ax, 16, 33.1, 32.6)
-ax.text(23, 39.3, "LONG", color=EM, fontsize=9, fontweight="bold", ha="center")
-line(ax, CX + 11, 37.5, 48, 37.5); line(ax, 48, 37.5, 48, 33.1)
-varrow(ax, 48, 33.1, 32.6)
-ax.text(41, 39.3, "SHORT", color=RD, fontsize=9, fontweight="bold", ha="center")
+line(ax, CX - 11, 44, 16, 44); line(ax, 16, 44, 16, 39.6)
+varrow(ax, 16, 39.6, 37)
+ax.text(23, 45.8, "LONG", color=EM, fontsize=9, fontweight="bold", ha="center")
+line(ax, CX + 11, 44, 48, 44); line(ax, 48, 44, 48, 39.6)
+varrow(ax, 48, 39.6, 37)
+ax.text(43, 45.8, "SHORT", color=RD, fontsize=9, fontweight="bold", ha="center")
 
-gate(16, 29.5, "close above " + NL + "EMA200 ?", w=20, h=5.2)
-gate(48, 29.5, "BTC Supertrend " + NL + "bearish ?", w=22, h=5.2)
-varrow(ax, 16, 26.9, 25.6)
-varrow(ax, 48, 26.9, 25.6)
-gate(16, 22, "market breadth " + NL + ">= 0.15 ?", w=20, h=5.2)
-gate(48, 22, "market breadth " + NL + ">= 0.15 ?", w=22, h=5.2)
-varrow(ax, 16, 19.3, 17.9, EM)
-varrow(ax, 48, 19.3, 17.9, EM)
+gate(16, 33.5, "close above " + NL + "EMA200 ?", w=20, h=5.2)
+gate(48, 33.5, "BTC Supertrend " + NL + "bearish ?", w=22, h=5.2)
+ax.text(3.2, 33.5, "no = skip", color=RD, fontsize=7.6, style="italic")
+ax.text(62, 33.5, "no = skip", color=RD, fontsize=7.6, style="italic")
+varrow(ax, 16, 30.9, 29.6)
+varrow(ax, 48, 30.9, 29.6)
+gate(16, 26, "market breadth " + NL + ">= 0.15 ?", w=20, h=5.2)
+gate(48, 26, "market breadth " + NL + ">= 0.15 ?", w=22, h=5.2)
+ax.text(3.2, 26, "no = skip", color=RD, fontsize=7.6, style="italic")
+ax.text(62, 26, "no = skip", color=RD, fontsize=7.6, style="italic")
+varrow(ax, 16, 23.3, 21.9, EM)
+varrow(ax, 48, 23.3, 21.9, EM)
 
-gate(CX, 14.5, "quality tier: direction x breadth x symbol", AM, w=30, h=5.2)
-line(ax, 16, 19.3, 16, 14.5); line(ax, 16, 14.5, 17, 14.5)
-line(ax, 48, 19.3, 48, 14.5); line(ax, 48, 14.5, 47, 14.5)
+gate(CX, 18.5, "quality tier: direction x breadth x symbol", AM, w=30, h=5.2)
+line(ax, 16, 23.3, 16, 18.5); line(ax, 16, 18.5, 17, 18.5)
+line(ax, 48, 23.3, 48, 18.5); line(ax, 48, 18.5, 47, 18.5)
 
-box(ax, 2, 2.5, 20, 7, "TAKE - tier A",
+box(ax, 2, 8, 20, 7, "TAKE - tier A",
     ["confirmed long - full risk 0.5%"], EM)
-box(ax, 24, 2.5, 20, 7, "TAKE - tier B",
+box(ax, 24, 8, 20, 7, "TAKE - tier B",
     ["flush / high-breadth short - scaled risk"], EM)
-box(ax, 46, 2.5, 24, 7, "NO TRADE this candle",
+box(ax, 46, 8, 24, 7, "NO TRADE this candle",
     ["C: low-breadth long, mid-breadth short", "D: BTC short"], RD)
-arrow(ax, CX - 5, 11.9, 12, 8.4, EM)
-arrow(ax, CX, 11.9, 34, 8.4, EM)
-arrow(ax, CX + 5, 11.9, 58, 8.4, RD)
+arrow(ax, CX - 5, 15.7, 12, 8.4, EM)
+arrow(ax, CX, 15.7, 34, 8.4, EM)
+arrow(ax, CX + 5, 15.7, 58, 8.4, RD)
 
-line(ax, RAIL, 60, RAIL, 6, RD)
-line(ax, RAIL, 6, 70, 6, RD)
+line(ax, RAIL, 58.5, RAIL, 11.5, RD)
+line(ax, RAIL, 11.5, 70, 11.5, RD)
 
 fig.savefig("docs/pipeline.png", dpi=170, facecolor=BG)
 plt.close(fig)
@@ -265,14 +269,14 @@ box(ax, 74, 28, 24, 7.2, "EXIT - opposite flip",
 box(ax, 74, 16, 24, 7.2, "EXIT - time stop",
     ["profit banked before decay", "avg +0.47R - 85% win"], EM)
 
-arrow(ax, 30, 36, 36, 36, CY)
-arrow(ax, 66, 37.5, 74, 36.5, RD)
-arrow(ax, 66, 34, 74, 24.6, AM, rad=0.12)
-arrow(ax, 66, 32, 74, 12.4, EM, rad=-0.15)
+arrow(ax, 30, 28, 36, 28, CY)
+arrow(ax, 66, 30, 74, 36.4, RD, rad=0.12)
+arrow(ax, 66, 27.5, 74, 24.6, AM)
+arrow(ax, 66, 25.5, 74, 12.4, EM, rad=-0.12)
 
-line(ax, 51, 31.8, 51, 10.5, VI)
+line(ax, 51, 23.6, 51, 10.5, VI)
 line(ax, 51, 10.5, 17, 10.5, VI)
-arrow(ax, 17, 10.5, 17, 31.8, CY)
+arrow(ax, 17, 10.5, 17, 23.6, CY)
 ax.text(34, 8.9, "no exit -> trail ratchets -> repeat next candle",
         color=SUB, fontsize=9.5, style="italic", ha="center")
 
