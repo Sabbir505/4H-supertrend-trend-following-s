@@ -213,6 +213,7 @@ Edit `.env` to adjust:
 - `MAX_OPEN_POSITIONS` — portfolio cap (default: 10)
 - `RISK_PCT_FULL` / `RISK_PCT_HALF` — per-trade risk by regime (set: 0.5% / 0.25%; halved after 3-year drawdown validation)
 - `EXECUTION_MODE` — off / dry / live futures execution (see SYSTEM_DOCUMENTATION §7b; dry by default, leverage capped at 5x, isolated margin, `EXECUTION_MAX_POSITIONS=15`)
+- `EXECUTION_SIZING` — auto (0.5%/0.25% of equity risk once the account can express it, fixed margin below) / percent / fixed
 - `SIGNAL_COOLDOWN_HOURS` — dedup window (default: 4)
 
 ---

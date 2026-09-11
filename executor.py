@@ -63,12 +63,13 @@ class FuturesExecutor:
         self._algo_id_by_symbol = {}                # symbol -> algoId of our stop
         self._qty_by_symbol = {}                    # symbol -> tracked qty
         self.open_count = 0                         # executor-tracked positions
+        self._equity_cache = (0.0, 0.0)             # (ts, USDT wallet balance)
         if self.mode == "live":
-            logger.info("Executor LIVE: %dx leverage, $%s margin/position, "
-                        "max %d positions, isolated",
+            logger.info("Executor LIVE: %dx leverage, max %d positions, "
+                        "isolated, sizing=%s",
                         config.execution_leverage,
-                        config.execution_margin_usdt,
-                        config.execution_max_positions)
+                        config.execution_max_positions,
+                        config.execution_sizing)
         elif self.mode == "dry":
             logger.info("Executor DRY-RUN: orders will be logged, not sent "
                         "(set EXECUTION_MODE=live to trade)")
@@ -143,19 +144,24 @@ class FuturesExecutor:
             self._alert(f"exchangeInfo({symbol})", e)
             return None
 
-    def _qty_for_notional(self, symbol: str, price: float) -> float | None:
-        """Quantity for the configured notional, snapped to the symbol's step
-        size. When the rounded-down quantity lands below the exchange's
-        minQty / minNotional (common when the planned notional is close to
-        the $5 floor), it is bumped UP to the smallest tradable quantity —
-        otherwise almost every signal would be untradeable. Returns None
-        only when even that cannot satisfy the filters (e.g. BTC's 0.001
-        lot = ~$78)."""
+    def _qty_for_notional(self, symbol: str, price: float,
+                          notional: float | None = None,
+                          allow_bump: bool = True) -> float | None:
+        """Quantity for the given notional (default: configured margin x
+        leverage), snapped DOWN to the symbol's step size.
+
+        allow_bump=True raises a below-floor quantity to the smallest
+        tradable size — fixed sizing needs this, otherwise almost every
+        signal is untradeable when the plan sits near the $5 floor.
+        allow_bump=False returns None instead, so percent sizing can never
+        silently exceed its risk target. Returns None when not even the
+        smallest size satisfies the filters (e.g. BTC's 0.001 lot = ~$78)."""
         f = self._filters(symbol)
         if f is None or price <= 0:
             return None
-        notional = self.config.execution_margin_usdt * \
-            self.config.execution_leverage
+        if notional is None:
+            notional = self.config.execution_margin_usdt * \
+                self.config.execution_leverage
         step = f.get("step_size", 0.001)
         min_qty = f.get("min_qty", 0.0)
         min_notional = f.get("min_notional", 5.0)
@@ -163,6 +169,8 @@ class FuturesExecutor:
         raw = notional / price
         qty = round(int(raw / step) * step, 10)
         if qty < min_qty or qty * price < min_notional:
+            if not allow_bump:
+                return None
             qty = round((int(raw / step) + 1) * step, 10)   # bump up one step
             if qty < min_qty:
                 qty = round(min_qty, 10)
@@ -172,6 +180,86 @@ class FuturesExecutor:
                         symbol, qty, qty * price, min_qty, min_notional)
             return None
         return qty
+
+    def _equity(self) -> float | None:
+        """USDT futures wallet balance used for percent sizing. Cached for
+        60s (one scan can open several positions). Falls back to
+        EXECUTION_EQUITY_OVERRIDE when no API keys are configured, else
+        returns None — callers then use fixed sizing."""
+        ts, val = self._equity_cache
+        if ts and time.time() - ts < 60:
+            return val or None
+        equity = None
+        if self.config.binance_api_key and self.config.binance_api_secret:
+            try:
+                for b in self._signed("GET", "/fapi/v2/balance", {}):
+                    if b.get("asset") == "USDT":
+                        equity = float(b.get("balance", 0) or 0)
+            except Exception as e:
+                logger.warning("Equity fetch failed (%s) — falling back", e)
+        if equity is None and self.config.execution_equity_override > 0:
+            equity = self.config.execution_equity_override
+        self._equity_cache = (time.time(), equity or 0.0)
+        return equity or None
+
+    def _qty_for_position(self, symbol: str, pos: dict) -> tuple[float | None, str]:
+        """Quantity for a new position under EXECUTION_SIZING, plus a label
+        for logs. percent targets risk_pct of equity at the position's stop
+        distance (notional = equity x risk_pct / sl_dist); auto uses that
+        when expressible and otherwise the fixed margin; fixed always uses
+        the fixed margin."""
+        price = float(pos.get("entry") or 0)
+        stop = pos.get("initial_stop")
+        risk_pct = pos.get("risk_pct")
+        if risk_pct is None:
+            risk_pct = self.config.risk_pct_full
+        mode = self.config.execution_sizing
+        sl_dist = (abs(price - float(stop)) / price
+                   if (stop and price > 0) else None)
+        fallback_note = ""
+
+        if mode in ("auto", "percent"):
+            if not sl_dist:
+                if mode == "percent":
+                    logger.warning("Skip %s: no stop distance — percent "
+                                   "sizing needs one", symbol)
+                    return None, "percent-infeasible"
+            else:
+                equity = self._equity()
+                if not equity:
+                    if mode == "percent":
+                        logger.warning("Skip %s: percent sizing needs an "
+                                       "equity value (API keys or "
+                                       "EXECUTION_EQUITY_OVERRIDE)", symbol)
+                        return None, "no-equity"
+                else:
+                    pct = float(risk_pct) / 100.0
+                    target = equity * pct / sl_dist
+                    qty = self._qty_for_notional(symbol, price, target,
+                                                 allow_bump=False)
+                    if qty is not None:
+                        risk_usd = qty * price * sl_dist
+                        return qty, (f"percent {100 * pct:.2f}% of "
+                                     f"${equity:.2f} -> ${qty * price:.2f} "
+                                     f"notional, risk ${risk_usd:.2f}")
+                    if mode == "percent":
+                        logger.warning(
+                            "Skip %s: $%.2f equity too small to express "
+                            "%.2f%% risk at a %.1f%% stop (needs $%.2f)",
+                            symbol, equity, 100 * pct, 100 * sl_dist, target)
+                        return None, "percent-infeasible"
+                    fallback_note = (f"auto->fixed: percent target "
+                                     f"${target:.2f} below tradable floor")
+
+        qty = self._qty_for_notional(symbol, price)     # fixed margin, bump ok
+        if qty is None:
+            return None, "not-tradable"
+        risk_usd = qty * price * sl_dist if sl_dist else None
+        label = (f"fixed ${self.config.execution_margin_usdt:g} margin -> "
+                 f"${qty * price:.2f} notional"
+                 + (f", risk ${risk_usd:.2f}" if risk_usd else "")
+                 + (f" ({fallback_note})" if fallback_note else ""))
+        return qty, label
 
     def _setup_symbol(self, symbol: str):
         """One-time leverage + isolated margin per symbol."""
@@ -301,16 +389,17 @@ class FuturesExecutor:
         symbol, direction = pos["symbol"], pos["direction"]
         stop = pos.get("initial_stop")
         try:
-            qty = self._qty_for_notional(symbol, pos["entry"])
+            qty, sizing = self._qty_for_position(symbol, pos)
             if qty is None:
+                logger.info("Not opening %s %s: %s", direction, symbol, sizing)
                 return False
 
             if self.mode == "dry":
                 self.open_count += 1
                 self._qty_by_symbol[symbol] = qty
                 self._last_stop[symbol] = round(stop, 8) if stop else None
-                logger.info("DRY entry: %s %s %s @ ~%s (stop %s)",
-                            direction, symbol, qty, pos["entry"], stop)
+                logger.info("DRY entry: %s %s %s @ ~%s (stop %s) | %s",
+                            direction, symbol, qty, pos["entry"], stop, sizing)
                 return True
 
             self._setup_symbol(symbol)
@@ -333,8 +422,8 @@ class FuturesExecutor:
                     self._alert(f"flatten({symbol})", e2)
                 return False
             self.open_count += 1
-            logger.info("EXECUTED entry: %s %s %s @ ~%s (stop %s)",
-                        direction, symbol, qty, pos["entry"], stop)
+            logger.info("EXECUTED entry: %s %s %s @ ~%s (stop %s) | %s",
+                        direction, symbol, qty, pos["entry"], stop, sizing)
             return True
         except Exception as e:
             self._alert(f"open({symbol} {direction})", e)

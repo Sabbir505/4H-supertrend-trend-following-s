@@ -151,6 +151,22 @@ class Config:
         self.execution_leverage = min(5, max(1, self._get_int(
             "EXECUTION_LEVERAGE", 5)))
         self.execution_max_positions = self._get_int("EXECUTION_MAX_POSITIONS", 15)
+        # Position sizing for live execution:
+        #   auto    - percent risk when the account can express it, else the
+        #             fixed EXECUTION_MARGIN_USDT margin (default; transitions
+        #             on its own as the account grows past ~$85)
+        #   percent - strictly risk risk_pct of equity per trade; trades are
+        #             SKIPPED when the account is too small to express it
+        #   fixed   - always EXECUTION_MARGIN_USDT margin per trade
+        self.execution_sizing = os.getenv("EXECUTION_SIZING", "auto").strip().lower()
+        if self.execution_sizing not in ("auto", "percent", "fixed"):
+            logger.warning("Invalid EXECUTION_SIZING %r - using 'auto'",
+                           self.execution_sizing)
+            self.execution_sizing = "auto"
+        # Equity to assume when no API keys are available (dry-run previews
+        # without keys). 0 = unknown.
+        self.execution_equity_override = self._get_float(
+            "EXECUTION_EQUITY_OVERRIDE", 0.0)
 
         try:
             self.candle_fetch_limit = int(os.getenv("CANDLE_FETCH_LIMIT", "600"))

@@ -46,17 +46,17 @@ def main():
 
     # production executor, real orders
     ex = FuturesExecutor(cfg)
-    qty = ex._qty_for_notional(SYMBOL, price)
-    if qty is None:
-        print(f"FAIL: {SYMBOL} cannot be traded at $5 notional "
-              f"(exchange minimums) — try another symbol")
-        return 1
-    print(f"[2] computed quantity: {qty} (~$"
-          f"{qty * price:.2f} notional, ${cfg.execution_margin_usdt} margin @ "
-          f"{cfg.execution_leverage}x)")
-
     pos = {"symbol": SYMBOL, "direction": "BUY", "entry": price,
-           "initial_stop": round(price * 0.97, 8)}   # stop 3% below
+           "initial_stop": round(price * 0.97, 8),   # stop 3% below
+           "risk_pct": cfg.risk_pct_full}
+    qty, sizing = ex._qty_for_position(SYMBOL, pos)
+    if qty is None:
+        print(f"FAIL: {SYMBOL} cannot be traded at this size ({sizing}) — "
+              f"try another symbol")
+        return 1
+    print(f"[2] sizing: {sizing}")
+    print(f"    quantity: {qty} (~${qty * price:.2f} notional @ "
+          f"{cfg.execution_leverage}x)")
 
     print("[3] placing MARKET entry + protective stop ...")
     if not ex.open_position(pos):

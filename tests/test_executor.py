@@ -26,6 +26,8 @@ def config():
     c.execution_margin_usdt = 1.0
     c.execution_leverage = 5
     c.execution_max_positions = 15
+    # Existing tests assert fixed-$ behavior; sizing-mode tests set their own.
+    c.execution_sizing = "fixed"
     return c
 
 
@@ -63,6 +65,9 @@ class FakeSession:
                     {"filterType": "MIN_NOTIONAL", "notional": "5"},
                 ],
             }]})
+        if "/fapi/v2/balance" in url:
+            return FakeResponse([{"asset": "USDT", "balance": "1000",
+                                  "availableBalance": "900"}])
         if "marginType" in url:
             # emulate "already isolated" once
             return FakeResponse({"code": -4046, "msg": "No need to change margin type."}, 400)
@@ -213,6 +218,71 @@ def test_close_cancels_stop_and_sends_reduce_only(ex):
     assert any("reduceOnly=true" in c["url"] for c in new), \
         "close must be reduce-only"
     assert ex.open_count == 0
+
+
+# ── sizing modes (EXECUTION_SIZING) ──────────────────────────────────────
+
+
+def test_fixed_sizing_ignores_equity(ex):
+    ex.config.execution_sizing = "fixed"
+    ex._equity = lambda: 10_000.0
+    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
+    assert ex._qty_by_symbol["AAAUSDT"] == 5.0      # $1 x 5x, unchanged
+
+
+def test_percent_sizing_targets_risk_of_equity(ex):
+    """percent mode: notional = equity x risk_pct / stop distance, so the
+    loss at the stop is exactly risk_pct of equity."""
+    ex.config.execution_sizing = "percent"
+    ex._equity = lambda: 100.0
+    pos = _pos(entry=1.0, stop=0.9)                 # 10% stop distance
+    assert ex.open_position(pos) is True
+    qty = ex._qty_by_symbol["AAAUSDT"]
+    risk = qty * 1.0 * 0.10
+    assert abs(risk - 0.5) < 1e-9, "risk must be 0.5% of $100"
+    assert qty == 5.0
+
+
+def test_percent_sizing_honors_position_risk_pct(ex):
+    """The signal's breadth-scaled risk_pct (0.25 half-risk) is respected."""
+    ex.config.execution_sizing = "percent"
+    ex._equity = lambda: 200.0
+    pos = _pos(entry=1.0, stop=0.9)
+    pos["risk_pct"] = 0.25
+    assert ex.open_position(pos) is True
+    qty = ex._qty_by_symbol["AAAUSDT"]
+    assert abs(qty * 1.0 * 0.10 - 0.5) < 1e-9      # $0.50 = 0.25% of 200
+
+
+def test_percent_sizing_skips_when_account_too_small(ex):
+    """percent mode must SKIP, never silently over-risk, below the floor."""
+    ex.config.execution_sizing = "percent"
+    ex._equity = lambda: 30.0                       # target $1.50 < $5 floor
+    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is False
+    assert ex.open_count == 0
+    assert not any("/fapi/v1/order" in c["url"] for c in ex._session.calls)
+
+
+def test_auto_sizing_falls_back_to_fixed_on_small_account(ex):
+    ex.config.execution_sizing = "auto"
+    ex._equity = lambda: 30.0                       # percent not expressible
+    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
+    assert ex._qty_by_symbol["AAAUSDT"] == 5.0      # fixed $5 notional
+
+
+def test_auto_sizing_scales_up_with_equity(ex):
+    ex.config.execution_sizing = "auto"
+    ex._equity = lambda: 1000.0
+    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
+    # target = 1000 x 0.5% / 10% = $50 notional -> 50 units
+    assert ex._qty_by_symbol["AAAUSDT"] == 50.0
+
+
+def test_auto_sizing_without_equity_uses_fixed(ex):
+    ex.config.execution_sizing = "auto"
+    ex._equity = lambda: None                       # no keys, no override
+    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
+    assert ex._qty_by_symbol["AAAUSDT"] == 5.0
 
 
 def test_live_requires_api_keys():
