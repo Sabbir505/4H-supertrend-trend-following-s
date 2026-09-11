@@ -24,15 +24,30 @@ from config import Config
 BASE = "https://fapi.binance.com"
 
 
+_time_off = 0
+
+
 def signed_get(cfg, path, params=None):
-    p = dict(params or {})
-    p["timestamp"] = int(time.time() * 1000)
-    p["recvWindow"] = 10000
-    q = urllib.parse.urlencode(p, True)
-    sig = hmac.new(cfg.binance_api_secret.encode(), q.encode(),
-                   hashlib.sha256).hexdigest()
-    r = requests.get(f"{BASE}{path}?{q}&signature={sig}",
-                     headers={"X-MBX-APIKEY": cfg.binance_api_key}, timeout=10)
+    """Signed GET with server-time offset (a drifting local clock otherwise
+    trips -1021) and one automatic resync+retry."""
+    global _time_off
+
+    def send():
+        p = dict(params or {})
+        p["timestamp"] = int(time.time() * 1000) + _time_off
+        p["recvWindow"] = 10000
+        q = urllib.parse.urlencode(p, True)
+        sig = hmac.new(cfg.binance_api_secret.encode(), q.encode(),
+                       hashlib.sha256).hexdigest()
+        return requests.get(f"{BASE}{path}?{q}&signature={sig}",
+                            headers={"X-MBX-APIKEY": cfg.binance_api_key},
+                            timeout=10)
+
+    r = send()
+    if r.status_code == 400 and "-1021" in r.text:
+        server = requests.get(f"{BASE}/fapi/v1/time", timeout=10).json()["serverTime"]
+        _time_off = server - int(time.time() * 1000)
+        r = send()
     return r
 
 

@@ -469,16 +469,39 @@ class FuturesExecutor:
                     symbol, direction, reason)
 
     def reconcile(self, positions: list):
-        """On startup: cancel stray open orders for managed symbols and
-        re-place stops at each virtual position's current trail, so a restart
-        never leaves a position without its protective stop."""
+        """On startup: verify each virtual position against the exchange and
+        manage only the ones that actually exist there — cancel stray orders
+        and re-place the protective stop at the current trail, so a restart
+        never leaves a real position unprotected. Virtual positions with no
+        exchange position (paper-era records, manual closes) are logged and
+        skipped: the bot must never send orders for phantom positions."""
         if not self.enabled:
             return
+        live_qty = {}
+        if self.mode == "live":
+            try:
+                for p in self._signed("GET", "/fapi/v2/positionRisk", {}):
+                    amt = float(p.get("positionAmt", 0) or 0)
+                    if amt:
+                        live_qty[p["symbol"]] = abs(amt)
+            except Exception as e:
+                self._alert("reconcile(positionRisk)", e)
+                logger.warning("Reconcile: cannot verify exchange positions — "
+                               "no stops placed this startup (existing "
+                               "exchange stops remain in force)")
+                return
         self.open_count = 0
         for pos in positions:
             symbol = pos["symbol"]
+            if self.mode == "live" and symbol not in live_qty:
+                logger.warning(
+                    "Reconcile: %s %s is tracked virtually but has no "
+                    "exchange position — skipped, no orders sent",
+                    symbol, pos.get("direction"))
+                continue
             self.open_count += 1
-            self._qty_by_symbol.setdefault(symbol, None)
+            if symbol in live_qty:
+                self._qty_by_symbol[symbol] = live_qty[symbol]
             if self.mode != "live":
                 continue
             try:
@@ -490,5 +513,5 @@ class FuturesExecutor:
                     self._place_stop(symbol, stop_side, stop)
             except Exception as e:
                 self._alert(f"reconcile({symbol})", e)
-        logger.info("Reconciled %d virtual position(s) with the exchange",
-                    len(positions))
+        logger.info("Reconciled %d of %d tracked position(s) with the "
+                    "exchange", self.open_count, len(positions))

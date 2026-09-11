@@ -65,6 +65,11 @@ class FakeSession:
                     {"filterType": "MIN_NOTIONAL", "notional": "5"},
                 ],
             }]})
+        if "/fapi/v2/positionRisk" in url:
+            return FakeResponse([
+                {"symbol": "AAAUSDT", "positionAmt": "5"},
+                {"symbol": "NOISEUSDT", "positionAmt": "0"},
+            ])
         if "/fapi/v2/balance" in url:
             return FakeResponse([{"asset": "USDT", "balance": "1000",
                                   "availableBalance": "900"}])
@@ -283,6 +288,32 @@ def test_auto_sizing_without_equity_uses_fixed(ex):
     ex._equity = lambda: None                       # no keys, no override
     assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
     assert ex._qty_by_symbol["AAAUSDT"] == 5.0
+
+
+def test_reconcile_manages_only_exchange_positions(ex):
+    """Restart safety: a virtual position with no exchange position (paper
+    record, manual close) must never get orders — and must not consume the
+    executor's position cap."""
+    ex.reconcile([_pos("AAAUSDT"), _pos("PHANTOMUSDT")])
+    assert ex.open_count == 1, "only the real exchange position counts"
+    assert ex._last_stop.get("AAAUSDT") is not None, "real one gets its stop"
+    assert "PHANTOMUSDT" not in ex._last_stop
+    assert not any("PHANTOMUSDT" in c["url"] for c in ex._session.calls),         "no orders may be sent for phantom positions"
+
+
+def test_reconcile_aborts_cleanly_when_verification_fails(ex):
+    """If the exchange can't be queried, place nothing rather than risk
+    orders for phantom positions."""
+    def boom(method, path, params):
+        if "positionRisk" in path:
+            raise RuntimeError("network down")
+        return {"ok": True}
+
+    ex._signed = boom
+    ex._alert = lambda *a, **k: None
+    ex.reconcile([_pos("AAAUSDT")])
+    assert ex.open_count == 0
+    assert not ex._last_stop
 
 
 def test_live_requires_api_keys():
