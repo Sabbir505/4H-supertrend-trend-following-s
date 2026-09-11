@@ -93,16 +93,21 @@ def test_qty_respects_step_size_and_min_notional(ex):
     assert ex._qty_for_notional("AAAUSDT", 1.0) == 5.0
     # price 2.0 -> raw 2.5 -> step 0.1 -> 2.5, notional 5.0 OK
     assert ex._qty_for_notional("AAAUSDT", 2.0) == 2.5
-    # price 2.6 -> raw 1.923 -> rounds DOWN to 1.9 -> notional 4.94 < 5 -> skip
-    assert ex._qty_for_notional("AAAUSDT", 2.6) is None
+    # price 2.6 -> raw 1.923 -> rounds DOWN to 1.9 (4.94 < 5 floor) ->
+    # bumped UP one step to 2.0 -> notional 5.2, exchange-legal
+    assert ex._qty_for_notional("AAAUSDT", 2.6) == 2.0
 
 
-def test_qty_rounded_down_never_exceeds_notional(ex):
+def test_qty_bump_up_stays_within_one_step(ex):
     q = ex._qty_for_notional("RICHUSDT", 6.25)   # step 0.001: 0.8 exactly
     assert q == 0.8
     assert q * 6.25 <= 5.0 + 1e-9
-    # a round-down that lands below minNotional must be skipped, not sent
-    assert ex._qty_for_notional("RICHUSDT", 7.5) is None   # 0.666 x 7.5 = 4.995 < 5
+    # round-down lands below the $5 floor (0.666 x 7.5 = 4.995) ->
+    # bumped UP one step (0.667) -> exchange-legal, over-plan by one step only
+    q2 = ex._qty_for_notional("RICHUSDT", 7.5)
+    assert q2 == 0.667
+    assert q2 * 7.5 >= 5.0
+    assert (q2 - 5.0 / 7.5) * 7.5 <= 0.001 * 7.5 + 1e-9
 
 
 # ── dry mode: orders logged, never sent ──────────────────────────────────
@@ -136,14 +141,18 @@ def test_off_mode_is_a_full_no_op(config):
 # ── live mode: order construction ────────────────────────────────────────
 
 
-def test_live_open_places_market_entry_then_stop(ex):
+def test_live_open_places_market_entry_then_algo_stop(ex):
     assert ex.open_position(_pos()) is True
     order_urls = [c["url"] for c in ex._session.calls if "/fapi/v1/order" in c["url"]]
-    assert len(order_urls) == 2, "entry + stop"
-    assert "type=MARKET" in order_urls[0] and "side=BUY" in order_urls[0]
-    assert "type=STOP_MARKET" in order_urls[1]
-    assert "closePosition=true" in order_urls[1]
-    assert "side=SELL" in order_urls[1], "long stop must be a SELL"
+    assert len(order_urls) == 1 and "type=MARKET" in order_urls[0]
+    assert "side=BUY" in order_urls[0]
+    algo_urls = [c["url"] for c in ex._session.calls
+                 if "/fapi/v1/algoOrder" in c["url"]]
+    assert len(algo_urls) == 1, "protective stop via Algo Order API"
+    assert "type=STOP_MARKET" in algo_urls[0]
+    assert "closePosition=true" in algo_urls[0]
+    assert "triggerPrice=0.9" in algo_urls[0]
+    assert "side=SELL" in algo_urls[0], "long stop must be a SELL"
     assert "X-MBX-APIKEY" in ex._session.calls[0]["headers"]
     assert "signature=" in order_urls[0], "orders must be signed"
 
@@ -153,7 +162,9 @@ def test_live_short_entry_uses_sell_and_buy_stop(ex):
     assert ex.open_position(_pos(direction="SELL", stop=1.1)) is True
     order_urls = [c["url"] for c in ex._session.calls if "/fapi/v1/order" in c["url"]]
     assert "side=SELL" in order_urls[0]
-    assert "side=BUY" in order_urls[1], "short stop must be a BUY"
+    algo_urls = [c["url"] for c in ex._session.calls
+                 if "/fapi/v1/algoOrder" in c["url"]]
+    assert "side=BUY" in algo_urls[0], "short stop must be a BUY"
 
 
 def test_failed_stop_after_entry_flattens(ex):
@@ -161,7 +172,7 @@ def test_failed_stop_after_entry_flattens(ex):
     real_signed = ex._signed
 
     def flaky(method, path, params):
-        if "/fapi/v1/order" in path and params.get("type") == "STOP_MARKET":
+        if path == "/fapi/v1/algoOrder" and method == "POST":
             calls["stop_attempts"] += 1
             raise RuntimeError("stop rejected")
         return real_signed(method, path, params)
@@ -190,7 +201,7 @@ def test_sync_stop_replaces_only_when_trail_moved(ex):
     ex.sync_stop(_pos(stop=0.9, trail=0.95))           # ratcheted -> replace
     urls = [c["url"] for c in ex._session.calls[n_before:]]
     assert any("allOpenOrders" in u for u in urls)     # cancel old
-    assert any("STOP_MARKET" in u and "stopPrice=0.95" in u for u in urls)
+    assert any("algoOrder" in u and "triggerPrice=0.95" in u for u in urls)
 
 
 def test_close_cancels_stop_and_sends_reduce_only(ex):

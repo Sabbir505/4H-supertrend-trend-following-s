@@ -58,6 +58,9 @@ class FuturesExecutor:
         self._symbol_filters = {}                   # symbol -> LOT_SIZE/NOTIONAL
         self._leverage_set = set()                  # symbols configured already
         self._last_stop = {}                        # symbol -> stop we placed
+        self._time_off = 0                          # Binance server-time offset (ms)
+        self._algo_place_path = None                # discovered Algo Order endpoint
+        self._algo_id_by_symbol = {}                # symbol -> algoId of our stop
         self._qty_by_symbol = {}                    # symbol -> tracked qty
         self.open_count = 0                         # executor-tracked positions
         if self.mode == "live":
@@ -72,17 +75,32 @@ class FuturesExecutor:
 
     # ── transport ────────────────────────────────────────────────────────
 
+    def _time_offset(self) -> int:
+        """Offset (ms) between Binance server time and the local clock, so a
+        drifting Windows clock can't trip Binance's recvWindow checks."""
+        server = self._session.get(f"{self.base_url}/fapi/v1/time",
+                                   timeout=10).json()["serverTime"]
+        self._time_off = server - int(time.time() * 1000)
+        return self._time_off
+
     def _signed(self, method: str, path: str, params: dict) -> dict:
-        """Signed request to the futures API. Returns the JSON response."""
+        """Signed request to the futures API. Returns the JSON response.
+        Auto-resyncs the clock offset and retries once on -1021."""
+        def send():
+            params["timestamp"] = int(time.time() * 1000) + self._time_off
+            params["recvWindow"] = 10000
+            query = urlencode(params, True)
+            sig = hmac.new(self.config.binance_api_secret.encode("utf-8"),
+                           query.encode("utf-8"), hashlib.sha256).hexdigest()
+            url = f"{self.base_url}{path}?{query}&signature={sig}"
+            return self._session.request(method, url,
+                                         headers={"X-MBX-APIKEY": self.config.binance_api_key},
+                                         timeout=10)
         params = dict(params or {})
-        params["timestamp"] = int(time.time() * 1000)
-        params["recvWindow"] = 10000
-        query = urlencode(params, True)
-        sig = hmac.new(self.config.binance_api_secret.encode("utf-8"),
-                       query.encode("utf-8"), hashlib.sha256).hexdigest()
-        url = f"{self.base_url}{path}?{query}&signature={sig}"
-        headers = {"X-MBX-APIKEY": self.config.binance_api_key}
-        resp = self._session.request(method, url, headers=headers, timeout=10)
+        resp = send()
+        if resp.status_code == 400 and "-1021" in resp.text:
+            self._time_off = self._time_offset()   # clock drifted: resync
+            resp = send()
         if resp.status_code >= 400:
             raise BinanceFuturesError(
                 f"{method} {path} -> {resp.status_code}: {resp.text[:200]}")
@@ -114,6 +132,8 @@ class FuturesExecutor:
                         filters["min_qty"] = float(f["minQty"])
                     elif f["filterType"] == "MIN_NOTIONAL":
                         filters["min_notional"] = float(f["notional"])
+                    elif f["filterType"] == "PRICE_FILTER":
+                        filters["tick_size"] = float(f["tickSize"])
                 self._symbol_filters[symbol] = filters
                 return filters
             logger.warning("Symbol %s not found on futures — skipping", symbol)
@@ -124,23 +144,32 @@ class FuturesExecutor:
             return None
 
     def _qty_for_notional(self, symbol: str, price: float) -> float | None:
-        """Quantity for the configured notional, rounded DOWN to the symbol's
-        step size. Returns None when exchange minimums cannot be met."""
+        """Quantity for the configured notional, snapped to the symbol's step
+        size. When the rounded-down quantity lands below the exchange's
+        minQty / minNotional (common when the planned notional is close to
+        the $5 floor), it is bumped UP to the smallest tradable quantity —
+        otherwise almost every signal would be untradeable. Returns None
+        only when even that cannot satisfy the filters (e.g. BTC's 0.001
+        lot = ~$78)."""
         f = self._filters(symbol)
         if f is None or price <= 0:
             return None
         notional = self.config.execution_margin_usdt * \
             self.config.execution_leverage
         step = f.get("step_size", 0.001)
-        qty = int((notional / price) / step) * step
-        qty = round(qty, 10)   # kill floating-point fuzz
-        if qty < f.get("min_qty", 0.0):
-            logger.info("Skip %s: qty %s below minQty %s at $%s notional",
-                        symbol, qty, f.get("min_qty"), notional)
-            return None
-        if qty * price < f.get("min_notional", 5.0):
-            logger.info("Skip %s: notional %.2f below minNotional %s",
-                        symbol, qty * price, f.get("min_notional"))
+        min_qty = f.get("min_qty", 0.0)
+        min_notional = f.get("min_notional", 5.0)
+
+        raw = notional / price
+        qty = round(int(raw / step) * step, 10)
+        if qty < min_qty or qty * price < min_notional:
+            qty = round((int(raw / step) + 1) * step, 10)   # bump up one step
+            if qty < min_qty:
+                qty = round(min_qty, 10)
+        if qty < min_qty or qty * price < min_notional:
+            logger.info("Skip %s: smallest tradable qty %s = $%.2f, below "
+                        "minimums (minQty %s, minNotional %s)",
+                        symbol, qty, qty * price, min_qty, min_notional)
             return None
         return qty
 
@@ -164,25 +193,79 @@ class FuturesExecutor:
     # ── order actions ────────────────────────────────────────────────────
 
     def _cancel_symbol_orders(self, symbol: str):
+        """Cancel every working order for the symbol: legacy open orders AND
+        Algo Service conditional orders (the 2025-12-09 migration moved
+        STOP_MARKET to the Algo API — see REPORT.md / error -4120)."""
         try:
             self._signed("DELETE", "/fapi/v1/allOpenOrders",
                          {"symbol": symbol})
         except BinanceFuturesError as e:
-            if not _is_code(e, "-2011"):   # unknown order = nothing to cancel
+            if not _is_code(e, "-2011"):
                 raise
+        try:
+            algo = self._signed("GET", "/fapi/v1/openAlgoOrders",
+                                {"symbol": symbol})
+            for o in algo if isinstance(algo, list) else algo.get("orders", []):
+                try:
+                    self._signed("DELETE", "/fapi/v1/algoOrder",
+                                 {"symbol": symbol,
+                                  "algoId": o.get("algoId")})
+                except BinanceFuturesError as e:
+                    if not _is_code(e, "-2011") and not _is_code(e, "-2013"):
+                        raise
+        except BinanceFuturesError as e:
+            if not _is_code(e, "-2011"):
+                logger.warning("Algo order cancel probe failed for %s: %s",
+                               symbol, e)
+
+    def _snap_price(self, symbol: str, price: float) -> float:
+        """Snap a trigger price to the symbol's tick size (the Algo API
+        rejects over-precision prices)."""
+        f = self._filters(symbol) or {}
+        tick = f.get("tick_size")
+        if not tick:
+            return round(price, 8)
+        return round(round(price / tick) * tick, 10)
 
     def _place_stop(self, symbol: str, close_side: str, stop_price: float):
-        price = round(stop_price, 8)
-        self._signed("POST", "/fapi/v1/order", {
+        """Place the protective stop as an Algo Service CONDITIONAL
+        STOP_MARKET (legacy /fapi/v1/order returns -4120 since 2025-12-09).
+        The exact place path is discovered once by probing the known
+        candidates, then cached."""
+        price = self._snap_price(symbol, stop_price)
+        payload = {
             "symbol": symbol,
             "side": close_side,
+            "algoType": "CONDITIONAL",
             "type": "STOP_MARKET",
-            "stopPrice": price,
+            "triggerPrice": price,
             "closePosition": "true",
             "workingType": "MARK_PRICE",
-        })
+        }
+        if self._algo_place_path is None:
+            candidates = ["/fapi/v1/algoOrder", "/fapi/v1/algo/order",
+                          "/fapi/v1/conditional/order"]
+            for path in candidates:
+                try:
+                    r = self._signed("POST", path, payload)
+                    self._algo_place_path = path
+                    self._algo_id_by_symbol[symbol] = r.get("algoId")
+                    self._last_stop[symbol] = price
+                    logger.info("Stop placed (algo %s): %s %s @ %s [algoId %s]",
+                                path, symbol, close_side, price,
+                                r.get("algoId"))
+                    return
+                except BinanceFuturesError as e:
+                    if "404" in str(e) or "-1100" in str(e) or "-1120" in str(e):
+                        continue          # wrong path, probe the next one
+                    raise
+            raise BinanceFuturesError(
+                "no working Algo Order place endpoint found")
+        r = self._signed("POST", self._algo_place_path, payload)
+        self._algo_id_by_symbol[symbol] = r.get("algoId")
         self._last_stop[symbol] = price
-        logger.info("Stop placed: %s %s @ %s", symbol, close_side, price)
+        logger.info("Stop placed: %s %s @ %s [algoId %s]",
+                    symbol, close_side, price, r.get("algoId"))
 
     def _market_close(self, symbol: str, direction: str):
         """MARKET reduce-only close of the tracked quantity."""
