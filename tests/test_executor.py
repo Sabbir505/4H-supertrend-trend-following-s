@@ -6,15 +6,17 @@ dry-mode tests verify order *intent* (logs/state) without any transport.
 """
 
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import Config
-from executor import FuturesExecutor
+from executor import FuturesExecutor, BinanceFuturesError, BinanceRateLimited
 
 
 @pytest.fixture
@@ -26,16 +28,15 @@ def config():
     c.execution_margin_usdt = 1.0
     c.execution_leverage = 5
     c.execution_max_positions = 15
-    # Existing tests assert fixed-$ behavior; sizing-mode tests set their own.
-    c.execution_sizing = "fixed"
     return c
 
 
 class FakeResponse:
-    def __init__(self, payload=None, status=200):
+    def __init__(self, payload=None, status=200, headers=None, text=None):
         self._payload = payload or {}
         self.status_code = status
-        self.text = str(self._payload)
+        self.text = text if text is not None else str(self._payload)
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -56,6 +57,7 @@ class FakeSession:
                     {"filterType": "LOT_SIZE",
                      "stepSize": "0.1", "minQty": "0.1"},
                     {"filterType": "MIN_NOTIONAL", "notional": "5"},
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.001"},
                 ],
             }, {
                 "symbol": "RICHUSDT",
@@ -151,6 +153,54 @@ def test_off_mode_is_a_full_no_op(config):
 # ── live mode: order construction ────────────────────────────────────────
 
 
+def test_live_entry_retries_once_on_notional_rejection(ex):
+    """-4164 (notional < $5 at fill time, e.g. price slipped below the
+    signal price) must trigger one retry at a larger notional, not lose
+    the trade."""
+    calls = {"n": 0}
+    original_request = ex._session.request
+
+    def flaky(method, url, headers=None, timeout=None):
+        if "/fapi/v1/order" in url and calls["n"] == 0:
+            calls["n"] += 1
+            ex._session.calls.append(
+                {"method": method, "url": url, "headers": headers})
+            return FakeResponse(
+                {"code": -4164,
+                 "msg": "Order's notional must be no smaller than 5."},
+                400)
+        return original_request(method, url, headers=headers, timeout=timeout)
+
+    ex._session.request = flaky
+    assert ex.open_position(_pos()) is True
+    order_urls = [c["url"] for c in ex._session.calls
+                  if "/fapi/v1/order" in c["url"]]
+    assert len(order_urls) == 2, "rejected entry retried once"
+    assert "quantity=5.2" in order_urls[1], "retry uses +5% notional (5.25)"
+    algo_urls = [c["url"] for c in ex._session.calls
+                 if "/fapi/v1/algoOrder" in c["url"]]
+    assert len(algo_urls) == 1, "stop placed after the successful retry"
+
+
+def test_live_entry_not_retried_for_other_errors(ex):
+    original = ex._qty_for_notional
+    ex._qty_for_notional = lambda symbol, price, notional=None: original(
+        symbol, price) if notional is None else original(
+        symbol, price, notional)
+    calls = {"n": 0}
+    req = ex._session.request
+
+    def bad(method, url, headers=None, timeout=None):
+        if "/fapi/v1/order" in url:
+            calls["n"] += 1
+            return FakeResponse({"code": -2019, "msg": "Margin is insufficient."}, 400)
+        return req(method, url, headers=headers, timeout=timeout)
+
+    ex._session.request = bad
+    assert ex.open_position(_pos()) is False
+    assert calls["n"] == 1, "non-notional errors must not be retried"
+
+
 def test_live_open_places_market_entry_then_algo_stop(ex):
     assert ex.open_position(_pos()) is True
     order_urls = [c["url"] for c in ex._session.calls if "/fapi/v1/order" in c["url"]]
@@ -168,7 +218,7 @@ def test_live_open_places_market_entry_then_algo_stop(ex):
 
 
 def test_live_short_entry_uses_sell_and_buy_stop(ex):
-    ex._qty_for_notional = lambda symbol, price: 5.0   # bypass per-symbol filters
+    ex._qty_for_notional = lambda symbol, price, notional=None: 5.0  # bypass per-symbol filters
     assert ex.open_position(_pos(direction="SELL", stop=1.1)) is True
     order_urls = [c["url"] for c in ex._session.calls if "/fapi/v1/order" in c["url"]]
     assert "side=SELL" in order_urls[0]
@@ -207,11 +257,107 @@ def test_sync_stop_replaces_only_when_trail_moved(ex):
     ex.open_position(_pos(stop=0.9, trail=0.9))
     n_before = len(ex._session.calls)
     ex.sync_stop(_pos(stop=0.9, trail=0.9))            # unchanged -> no-op
+    ex.sync_stop(_pos(stop=0.9, trail=0.90004))        # sub-tick ratchet -> no-op
     assert len(ex._session.calls) == n_before
     ex.sync_stop(_pos(stop=0.9, trail=0.95))           # ratcheted -> replace
     urls = [c["url"] for c in ex._session.calls[n_before:]]
-    assert any("allOpenOrders" in u for u in urls)     # cancel old
     assert any("algoOrder" in u and "triggerPrice=0.95" in u for u in urls)
+    assert not any("allOpenOrders" in u for u in urls), \
+        "replacement must be place-first (the -4130 recovery handles the " \
+        "old stop), not an unconditional cancel of every order"
+
+
+def test_place_stop_reuses_identical_existing_stop(ex):
+    """-4130 with an existing closePosition stop at the SAME trigger must
+    be treated as success — this is exactly the state left behind by a
+    rate-limited cancel, and reusing it is what makes sync_stop idempotent
+    across outages."""
+    real_signed = ex._signed
+    ex._algo_place_path = "/fapi/v1/algoOrder"
+
+    def conflicting(method, path, params):
+        if method == "POST" and path == "/fapi/v1/algoOrder":
+            raise BinanceFuturesError(
+                'POST /fapi/v1/algoOrder -> 400: {"code":-4130,"msg":"An '
+                'open stop or take profit order with GTE and closePosition '
+                'in the direction is existing."}')
+        return real_signed(method, path, params)
+
+    ex._signed = conflicting
+    # exchange reports the stop already at the desired trigger
+    ex._working_close_stop = lambda s, side: (12345, 0.9)
+    ex._place_stop("AAAUSDT", "SELL", 0.9)
+    assert ex._last_stop["AAAUSDT"] == 0.9
+    assert ex._algo_id_by_symbol["AAAUSDT"] == 12345
+    posts = [c for c in ex._session.calls
+             if "/fapi/v1/algoOrder" in c["url"] and c["method"] == "POST"]
+    assert not posts, "identical existing stop must be kept, not re-placed"
+
+
+def test_place_stop_replaces_conflicting_stop_at_other_level(ex):
+    real_signed = ex._signed
+
+    def conflicting_then_ok(method, path, params):
+        if method == "POST" and path == "/fapi/v1/algoOrder" \
+                and not conflicting_then_ok.retried:
+            conflicting_then_ok.retried = True
+            raise BinanceFuturesError(
+                'POST /fapi/v1/algoOrder -> 400: {"code":-4130,"msg":"An '
+                'open stop or take profit order with GTE and closePosition '
+                'in the direction is existing."}')
+        return real_signed(method, path, params)
+    conflicting_then_ok.retried = False
+
+    ex._signed = conflicting_then_ok
+    ex._working_close_stop = lambda s, side: (999, 0.8)   # stale level
+    ex._place_stop("AAAUSDT", "SELL", 0.9)
+    deletes = [c["url"] for c in ex._session.calls
+               if "algoOpenOrders" in c["url"]]
+    assert deletes, "stale stop must be batch-cancelled before re-placing"
+    posts = [c for c in ex._session.calls
+             if "/fapi/v1/algoOrder" in c["url"] and c["method"] == "POST"]
+    assert conflicting_then_ok.retried, "first placement must hit -4130"
+    assert len(posts) == 1, "exactly one retry after the batch cancel"
+    assert ex._last_stop["AAAUSDT"] == 0.9
+
+
+def test_cancel_symbol_orders_uses_two_batch_cancels(ex):
+    ex.open_position(_pos())
+    n_before = len(ex._session.calls)
+    ex._cancel_symbol_orders("AAAUSDT")
+    urls = [c["url"] for c in ex._session.calls[n_before:]]
+    assert any("allOpenOrders" in u for u in urls)
+    assert any("algoOpenOrders" in u for u in urls), \
+        "algo orders must be cancelled via the batch endpoint"
+    assert not any("openAlgoOrders" in u for u in urls), \
+        "no per-order probe: the batch cancel replaces GET+DELETE loops"
+
+
+def test_ip_ban_pauses_all_requests(ex):
+    """A 418 must set the ban window and every later call must fail fast
+    WITHOUT touching the network — requests sent during a ban extend it."""
+    real_request = ex._session.request
+    ban = {"hits": 0}
+
+    def banned(method, url, headers=None, timeout=None):
+        if "balance" in url:
+            ban["hits"] += 1
+            return FakeResponse({}, 418, headers={"Retry-After": "120"},
+                                text='{"code":-1003,"msg":"Way too many '
+                                     'requests; IP(1.2.3.4) banned until '
+                                     '9999999999999."}')
+        return real_request(method, url, headers=headers, timeout=timeout)
+
+    ex._session.request = banned
+    with pytest.raises(BinanceRateLimited):
+        ex._signed("GET", "/fapi/v2/balance", {})
+    assert ban["hits"] == 1
+    calls_before = len(ex._session.calls)
+    with pytest.raises(BinanceRateLimited):
+        ex._signed("GET", "/fapi/v2/balance", {})
+    assert ban["hits"] == 1, "banned requests must not reach the network"
+    assert len(ex._session.calls) == calls_before
+    assert ex._banned_until > time.time()
 
 
 def test_close_cancels_stop_and_sends_reduce_only(ex):
@@ -225,69 +371,16 @@ def test_close_cancels_stop_and_sends_reduce_only(ex):
     assert ex.open_count == 0
 
 
-# ── sizing modes (EXECUTION_SIZING) ──────────────────────────────────────
+# ── sizing (fixed margin per trade) ─────────────────────────────────────
 
 
-def test_fixed_sizing_ignores_equity(ex):
-    ex.config.execution_sizing = "fixed"
-    ex._equity = lambda: 10_000.0
+def test_sizing_is_always_fixed_margin(ex):
+    """Every position commits exactly EXECUTION_MARGIN_USDT x leverage,
+    regardless of wallet balance — the balance endpoint is never queried."""
     assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
-    assert ex._qty_by_symbol["AAAUSDT"] == 5.0      # $1 x 5x, unchanged
-
-
-def test_percent_sizing_targets_risk_of_equity(ex):
-    """percent mode: notional = equity x risk_pct / stop distance, so the
-    loss at the stop is exactly risk_pct of equity."""
-    ex.config.execution_sizing = "percent"
-    ex._equity = lambda: 100.0
-    pos = _pos(entry=1.0, stop=0.9)                 # 10% stop distance
-    assert ex.open_position(pos) is True
-    qty = ex._qty_by_symbol["AAAUSDT"]
-    risk = qty * 1.0 * 0.10
-    assert abs(risk - 0.5) < 1e-9, "risk must be 0.5% of $100"
-    assert qty == 5.0
-
-
-def test_percent_sizing_honors_position_risk_pct(ex):
-    """The signal's breadth-scaled risk_pct (0.25 half-risk) is respected."""
-    ex.config.execution_sizing = "percent"
-    ex._equity = lambda: 200.0
-    pos = _pos(entry=1.0, stop=0.9)
-    pos["risk_pct"] = 0.25
-    assert ex.open_position(pos) is True
-    qty = ex._qty_by_symbol["AAAUSDT"]
-    assert abs(qty * 1.0 * 0.10 - 0.5) < 1e-9      # $0.50 = 0.25% of 200
-
-
-def test_percent_sizing_skips_when_account_too_small(ex):
-    """percent mode must SKIP, never silently over-risk, below the floor."""
-    ex.config.execution_sizing = "percent"
-    ex._equity = lambda: 30.0                       # target $1.50 < $5 floor
-    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is False
-    assert ex.open_count == 0
-    assert not any("/fapi/v1/order" in c["url"] for c in ex._session.calls)
-
-
-def test_auto_sizing_falls_back_to_fixed_on_small_account(ex):
-    ex.config.execution_sizing = "auto"
-    ex._equity = lambda: 30.0                       # percent not expressible
-    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
-    assert ex._qty_by_symbol["AAAUSDT"] == 5.0      # fixed $5 notional
-
-
-def test_auto_sizing_scales_up_with_equity(ex):
-    ex.config.execution_sizing = "auto"
-    ex._equity = lambda: 1000.0
-    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
-    # target = 1000 x 0.5% / 10% = $50 notional -> 50 units
-    assert ex._qty_by_symbol["AAAUSDT"] == 50.0
-
-
-def test_auto_sizing_without_equity_uses_fixed(ex):
-    ex.config.execution_sizing = "auto"
-    ex._equity = lambda: None                       # no keys, no override
-    assert ex.open_position(_pos(entry=1.0, stop=0.9)) is True
-    assert ex._qty_by_symbol["AAAUSDT"] == 5.0
+    assert ex._qty_by_symbol["AAAUSDT"] == 5.0      # $1 x 5x at price 1.0
+    assert not any("/fapi/v2/balance" in c["url"] for c in ex._session.calls), \
+        "fixed sizing must not fetch account equity"
 
 
 def test_reconcile_manages_only_exchange_positions(ex):
@@ -325,3 +418,115 @@ def test_live_requires_api_keys():
     if c.execution_mode == "live" and not (c.binance_api_key and c.binance_api_secret):
         c.execution_mode = "dry"
     assert c.execution_mode == "dry", "live without keys must fall back to dry"
+
+
+# ── close robustness: qty tracked until confirmed flat ───────────────────
+
+
+def test_market_close_keeps_qty_on_transport_error(ex, monkeypatch):
+    """A network drop during a close must not orphan the real position: the
+    tracked quantity survives for the pending-close retry (the 2026-09-28
+    SYRUPUSDT close failure popped the qty before the order was sent)."""
+    monkeypatch.setattr("executor.time.sleep", lambda s: None)
+    ex.open_position(_pos())
+    assert ex.open_count == 1
+
+    real = ex._session.request
+    calls = {"n": 0}
+
+    def down(method, url, headers=None, timeout=None):
+        calls["n"] += 1
+        raise requests.exceptions.ConnectionError("SSL EOF")
+
+    ex._session.request = down
+    with pytest.raises(requests.exceptions.RequestException):
+        ex._market_close("AAAUSDT", "BUY")
+    assert calls["n"] == 3, "transport errors are retried"
+    assert "AAAUSDT" in ex._qty_by_symbol, "qty must survive a failed close"
+
+    # heals on a later scan: pending retry closes and cleans bookkeeping
+    ex._session = FakeSession()
+    ex._pending_closes["AAAUSDT"] = "BUY"
+    ex.retry_pending_closes()
+    assert "AAAUSDT" not in ex._qty_by_symbol
+    assert "AAAUSDT" not in ex._pending_closes
+    assert ex.open_count == 0
+
+
+def test_close_position_failure_keeps_slot_and_registers_retry(ex, monkeypatch):
+    monkeypatch.setattr("executor.time.sleep", lambda s: None)
+    ex.open_position(_pos())
+    ex._alert = lambda *a, **k: None
+
+    def down(method, url, headers=None, timeout=None):
+        raise requests.exceptions.ConnectionError("down")
+
+    ex._session.request = down
+    ex.close_position(_pos(), reason="stop")
+    assert ex.open_count == 1, "failed close keeps the executor slot"
+    assert ex._pending_closes.get("AAAUSDT") == "BUY"
+
+    ex._session = FakeSession()
+    ex.retry_pending_closes()
+    assert "AAAUSDT" not in ex._pending_closes
+    assert ex.open_count == 0
+
+
+def test_market_close_handles_already_flat(ex):
+    ex.open_position(_pos())
+
+    def flat(method, url, headers=None, timeout=None):
+        if "/fapi/v1/order" in url:
+            return FakeResponse({"code": -2022, "msg": "ReduceOnly Order is rejected."}, 400)
+        return FakeResponse({"ok": True})
+
+    ex._session.request = flat
+    assert ex._market_close("AAAUSDT", "BUY") is True
+    assert "AAAUSDT" not in ex._qty_by_symbol
+
+
+def test_close_sends_market_before_cancelling_stop(ex):
+    """Close FIRST: if the close fails, the protective stop is still in
+    force (cancel-first left the position naked on a close failure)."""
+    ex.open_position(_pos())
+    ex._session.calls.clear()
+    ex.close_position(_pos(), reason="test")
+    urls = [c["url"] for c in ex._session.calls]
+    order_i = next(i for i, u in enumerate(urls) if "/fapi/v1/order" in u)
+    cancel_i = next(i for i, u in enumerate(urls) if "allOpenOrders" in u)
+    assert order_i < cancel_i
+
+
+def test_half_risk_positions_use_half_margin(ex):
+    ex.config.execution_margin_usdt = 4.0
+    qty_full, label_full = ex._qty_for_position("AAAUSDT", _pos())
+    pos_half = _pos()
+    pos_half["risk_level"] = "half"
+    qty_half, label_half = ex._qty_for_position("AAAUSDT", pos_half)
+    assert qty_full == 20.0          # $4 x 5x / 1.0
+    assert qty_half == 10.0          # $2 x 5x / 1.0
+    assert "[half-risk]" in label_half
+    assert "[half-risk]" not in label_full
+
+
+def test_resting_stop_is_disaster_in_close_mode(ex):
+    """Round-6 close mode: the resting exchange stop is the static disaster
+    net — both at entry and on sync — never the ratcheted trail (a resting
+    chandelier would fire intrabar and defeat the close trigger)."""
+    pos = _pos(entry=1.0, stop=0.9)
+    pos["disaster_stop"] = 0.85
+    assert ex._resting_stop(pos) == 0.85
+
+    ex.open_position(pos)
+    algo_urls = [c["url"] for c in ex._session.calls if "algoOrder" in c["url"]]
+    assert "triggerPrice=0.85" in algo_urls[0], "entry rests the disaster stop"
+
+    # sync must keep the disaster level even though the trail has moved
+    n_algo = len(ex._session.calls)
+    pos["trail_stop"] = 0.7
+    ex.sync_stop(pos)
+    assert len(ex._session.calls) == n_algo, "disaster stop never churns"
+
+    # legacy wick mode: the initial stop / trail is the resting level again
+    ex.config.stop_trigger_mode = "wick"
+    assert ex._resting_stop(pos) == 0.9

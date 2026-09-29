@@ -311,6 +311,11 @@ def run_scan():
         'full' if market_data['breadth'] >= config.breadth_threshold else 'half',
     )
 
+    # closes that failed on an earlier scan (network drop): the virtual
+    # position is already gone, so without this the exchange side would
+    # sit unmanaged until a restart
+    executor.retry_pending_closes()
+
     # 1) manage open virtual positions (trail / flip / time-stop exits)
     exits, orphan_alerts = position_tracker.process_exits(market_data)
     for trade in exits:
@@ -468,8 +473,12 @@ if __name__ == "__main__":
         exit(1)
 
     logger.info(f"Strategy: ST ATR{config.supertrend_atr_period}/{config.supertrend_multiplier} "
-                f"trail {config.trail_atr_mult}x, initial stop {config.initial_stop_atr_mult}x, "
-                f"time stop {config.time_stop_bars} bars")
+                f"trail {config.trail_atr_mult}x ({config.trail_atr_mode} "
+                f"ATR{config.trail_atr_period}), initial stop {config.initial_stop_atr_mult}x, "
+                f"{config.stop_trigger_mode}-trigger, time stop {config.time_stop_bars} bars")
+    if config.stop_trigger_mode == "close" and config.disaster_stop_mult <= 0:
+        logger.warning("DISASTER_STOP_MULT=0: close-triggered positions run "
+                       "with NO resting exchange stop between scans")
     logger.info(f"Gates: longs EMA{config.ema_filter_period}, shorts BTC-ST; "
                 f"breadth risk at {config.breadth_threshold}")
     logger.info(f"Timeframe: {config.scan_timeframe} | Max per scan: {config.max_signals_per_scan}")
