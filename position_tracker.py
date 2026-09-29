@@ -2,8 +2,14 @@
 Virtual position tracker for the 4H Supertrend trend-ride strategy.
 
 Mirrors the backtest engine's exit logic exactly (closed candles only):
-  - stop: chandelier trail (initial stop INITIAL_STOP_ATR_MULT xATR at entry, ratcheting by
-    close - 3.5xATR_entry), checked against each bar's low/high
+  - stop: chandelier. Round-6 default (REPORT §6h) evaluates it on bar
+    CLOSES (STOP_TRIGGER_MODE=close — a wick through the level does not
+    exit) and ratchets from the CURRENT ATR(TRAIL_ATR_PERIOD) each bar
+    (TRAIL_ATR_MODE=rolling) instead of the ATR frozen at entry. The legacy
+    intrabar wick trigger and frozen-ATR ratchet remain available via .env.
+    While in close mode a STATIC disaster stop (DISASTER_STOP_MULT xATR,
+    capped) rests on the exchange — the chandelier itself only exists at
+    scan time.
   - flip: opposite Supertrend flip on a closed candle -> exit at next open
   - time: 42 bars (7 days) after entry -> exit at that bar's close
 
@@ -84,7 +90,6 @@ class PositionTracker:
             'entry_signal_id': signal.get('id'),
             'interval': interval,
             'risk_level': signal.get('risk_level', 'full'),
-            'risk_pct': signal.get('risk_pct'),
             'breadth_at_entry': signal.get('breadth'),
             'initial_stop': signal.get('initial_stop'),
             'trail_stop': signal.get('initial_stop'),
@@ -98,8 +103,21 @@ class PositionTracker:
                 'initial_stop_atr_mult': self.config.initial_stop_atr_mult,
                 'time_stop_bars': self.config.time_stop_bars,
                 'breadth_threshold': self.config.breadth_threshold,
+                'stop_trigger_mode': self.config.stop_trigger_mode,
+                'trail_atr_mode': self.config.trail_atr_mode,
+                'trail_atr_period': self.config.trail_atr_period,
+                'disaster_stop_mult': self.config.disaster_stop_mult,
+                'disaster_stop_cap': self.config.disaster_stop_cap,
             },
         }
+        if self.config.disaster_stop_mult > 0:
+            # static resting disaster net (executor places this instead of
+            # the chandelier in close-trigger mode): min(mult xATR, cap x
+            # price) below the entry — same shape as the backtest's
+            pos['disaster_stop'] = round(
+                signal['price'] - (1 if signal['direction'] == 'BUY' else -1)
+                * min(self.config.disaster_stop_mult * signal['atr'],
+                      self.config.disaster_stop_cap * signal['price']), 10)
         self.positions[symbol] = pos
         self._save(POSITIONS_FILE, self.positions)
         logger.info("Position opened: %s %s @ %s (risk %s)",
@@ -153,12 +171,27 @@ class PositionTracker:
             self._save(TRADES_FILE, self.history)
         return exits, orphan_alerts
 
+    @staticmethod
+    def _atr_series(df, period: int) -> pd.Series:
+        """Wilder ATR over the replay frame — same formula as the backtest's
+        indicators.atr. The rolling chandelier needs the CURRENT ATR at every
+        bar; the scanner's df carries only the Supertrend's shorter-period
+        ATR column, so the round-6 trail period is computed here."""
+        high, low, prev_close = df['high'], df['low'], df['close'].shift(1)
+        tr = pd.concat([
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        return tr.ewm(com=period - 1, adjust=False).mean()
+
     def _evaluate_position(self, pos: dict, df) -> dict | None:
         """Causally replay one position over closed candles (open/high/low/
         close + supertrend_dir, indexed by bar open time). Mutates `pos`:
-        anchors the entry to the entry bar's open (once) and persists the
-        ratcheted trail_stop / trail_stop_asof when still open. Returns the
-        trade record if an exit fired, else None (position stays open).
+        anchors the entry to the entry bar's open (once), backfills the
+        disaster stop on pre-round-6 positions, and persists the ratcheted
+        trail_stop / trail_stop_asof when still open. Returns the trade
+        record if an exit fired, else None (position stays open).
 
         The replay starts from the initial stop and ratchets bar by bar so
         each bar is judged against the stop level that existed at that bar —
@@ -168,6 +201,10 @@ class PositionTracker:
         trail_mult = self.config.trail_atr_mult
         init_mult = self.config.initial_stop_atr_mult
         time_stop = self.config.time_stop_bars
+        close_trigger = self.config.stop_trigger_mode == 'close'
+        rolling_trail = self.config.trail_atr_mode == 'rolling'
+        atr_series = self._atr_series(df, self.config.trail_atr_period) \
+            if rolling_trail else None
 
         entry_bar_open = pd.Timestamp(pos['entry_bar_open'])
         idx = df.index.get_indexer([entry_bar_open], method='bfill')[0]
@@ -198,6 +235,15 @@ class PositionTracker:
         init_dist = max(init_mult * atr_entry, 0.02 * entry)
         stop = entry - direction * init_dist
 
+        # Round-6: backfill the static disaster net on positions opened
+        # before the field existed (entry-anchored, constant for the life
+        # of the position — same shape as the backtest's disaster stop).
+        if self.config.disaster_stop_mult > 0 and not pos.get('disaster_stop'):
+            pos['disaster_stop'] = round(
+                entry - direction
+                * min(self.config.disaster_stop_mult * atr_entry,
+                      self.config.disaster_stop_cap * entry), 10)
+
         # Where the causal replay starts. Normally the entry bar: replaying
         # from the initial stop reproduces the exact historical stop path.
         # If the entry bar has fallen out of the fetch window the early
@@ -227,17 +273,25 @@ class PositionTracker:
 
         for j in range(start, len(df)):
             bar = df.iloc[j]
-            # 1) trail/stop hit (conservative priority) — live from the
-            #    entry bar, matching the backtest engine. A bar that GAPS
-            #    through the stop fills at the bar's open (a real
-            #    stop-market order fills on the gap), never at the better
-            #    stop price.
-            if (direction == 1 and bar['low'] <= stop) or \
-               (direction == -1 and bar['high'] >= stop):
-                fill = min(bar['open'], stop) if direction == 1 \
-                    else max(bar['open'], stop)
-                exit_reason, exit_px, exit_j = 'stop', fill, j
-                break
+            # 1) chandelier stop. Close mode (round-6 default): only a
+            #    committed CLOSE beyond the level exits — a wick through it
+            #    does not. The exit fills at that close (the scan sees the
+            #    closed candle and sends a market order; slippage rides in
+            #    COST_RT). Wick mode (legacy): the low/high pierces
+            #    intrabar, filling at the bar's open on gaps (a real
+            #    stop-market contract — engine parity).
+            if close_trigger:
+                if (direction == 1 and bar['close'] <= stop) or \
+                        (direction == -1 and bar['close'] >= stop):
+                    exit_reason, exit_px, exit_j = 'stop', float(bar['close']), j
+                    break
+            else:
+                if (direction == 1 and bar['low'] <= stop) or \
+                        (direction == -1 and bar['high'] >= stop):
+                    fill = min(bar['open'], stop) if direction == 1 \
+                        else max(bar['open'], stop)
+                    exit_reason, exit_px, exit_j = 'stop', fill, j
+                    break
             # 2) opposite flip on a closed candle -> exit at next open
             #    (never on the entry bar — engine checks i > ei)
             if j > idx and bar['supertrend_dir'] == -direction:
@@ -250,8 +304,16 @@ class PositionTracker:
             if (j - idx) >= time_stop:
                 exit_reason, exit_px, exit_j = 'time', bar['close'], j
                 break
-            # 4) ratchet the trail from this bar's close
-            candidate = bar['close'] - direction * trail_mult * atr_entry
+            # 4) ratchet the trail from this bar's close — rolling mode uses
+            #    the CURRENT ATR (the level breathes with volatility), frozen
+            #    mode the ATR captured at the entry signal (legacy)
+            if rolling_trail:
+                atr_j = atr_series.iloc[j]
+                atr_ref = float(atr_j) if pd.notna(atr_j) and atr_j > 0 \
+                    else atr_entry
+            else:
+                atr_ref = atr_entry
+            candidate = bar['close'] - direction * trail_mult * atr_ref
             stop = max(stop, candidate) if direction == 1 else min(stop, candidate)
 
         if exit_reason is None:
@@ -285,7 +347,6 @@ class PositionTracker:
             'exit_time': exit_dt.isoformat(),
             'entry_signal_id': pos.get('entry_signal_id'),
             'risk_level': pos.get('risk_level'),
-            'risk_pct': pos.get('risk_pct'),
             'strategy': pos.get('strategy'),
             'params': pos.get('params'),
         }

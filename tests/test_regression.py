@@ -55,9 +55,11 @@ from api_server import load_signals, _cached_json, _json_cache  # noqa: E402
 @pytest.fixture
 def config():
     """A fresh Config() per test — avoids cross-test env-var leakage."""
-    # Stash the sandbox files so Config-driven side effects (none today,
-    # but future-proof) land in a temp dir.
-    return Config()
+    # Neutralize user-.env values that would change scanner behavior under
+    # test (exclusion is covered explicitly by its own test).
+    cfg = Config()
+    cfg.exclude_symbols = set()
+    return cfg
 
 
 @pytest.fixture
@@ -79,7 +81,6 @@ def synthetic_signal():
         "flip_candle_open": flip_open.isoformat(),
         "breadth": 0.55,
         "risk_level": "full",
-        "risk_pct": 1.0,
         "btc_dir": 1,
         "initial_stop": 65000.0 - 5.0 * 1500.0,
         "detected_at": datetime.now(timezone.utc).isoformat(),
@@ -155,6 +156,10 @@ def test_process_exits_checks_entry_bar(config):
     the stop and asserts the live tracker catches it."""
     pt = PositionTracker.__new__(PositionTracker)
     pt.config = config
+    # pinned to the legacy wick engine — the round-6 close-mode
+    # default has its own tests below
+    config.stop_trigger_mode = "wick"
+    config.trail_atr_mode = "frozen"
     pt.positions = {}
     pt.history = []
 
@@ -204,6 +209,10 @@ def test_process_exits_checks_entry_bar(config):
 def test_process_exits_no_exit_persists_ratchet(config):
     pt = PositionTracker.__new__(PositionTracker)
     pt.config = config
+    # pinned to the legacy wick engine — the round-6 close-mode
+    # default has its own tests below
+    config.stop_trigger_mode = "wick"
+    config.trail_atr_mode = "frozen"
     pt.positions = {}
     pt.history = []
 
@@ -328,7 +337,7 @@ def test_signal_model_accepts_both_shapes():
         "price": 1.0, "atr": 0.1, "atr_pct": 2.0,
         "interval": "4h", "detected_at": "2026-08-30T00:00:00+00:00",
         "source": "volume",
-        "initial_stop": 1.1, "risk_pct": 0.5, "breadth": 0.3,
+        "initial_stop": 1.1, "breadth": 0.3,
         "risk_level": "half", "ema200": 0.95, "supertrend_value": 1.05,
         "candle_time": "2026-08-29T20:00:00+00:00", "strategy": "st_trail_v2",
     }
@@ -347,6 +356,10 @@ def test_engine_tracker_parity_contract(config):
     to match, not this test."""
     pt = PositionTracker.__new__(PositionTracker)
     pt.config = config
+    # pinned to the legacy wick engine — the round-6 close-mode
+    # default has its own tests below
+    config.stop_trigger_mode = "wick"
+    config.trail_atr_mode = "frozen"
     pt.positions = {}
     pt.history = []
 
@@ -411,6 +424,10 @@ def test_process_exits_anchors_entry_to_entry_bar_open(config):
     entry bar must re-price the position and reseed the stop from the open."""
     pt = PositionTracker.__new__(PositionTracker)
     pt.config = config
+    # pinned to the legacy wick engine — the round-6 close-mode
+    # default has its own tests below
+    config.stop_trigger_mode = "wick"
+    config.trail_atr_mode = "frozen"
     pt.positions = {}
     pt.history = []
 
@@ -494,6 +511,10 @@ def test_tracker_gap_through_stop_fills_at_open(config):
     record the exit at the bar's open, mirroring the fixed engine."""
     pt = PositionTracker.__new__(PositionTracker)
     pt.config = config
+    # pinned to the legacy wick engine — the round-6 close-mode
+    # default has its own tests below
+    config.stop_trigger_mode = "wick"
+    config.trail_atr_mode = "frozen"
     pt.positions = {}
     pt.history = []
 
@@ -568,6 +589,10 @@ def test_process_exits_replay_is_causal(config):
     the trail has ratcheted up since."""
     pt = PositionTracker.__new__(PositionTracker)
     pt.config = config
+    # pinned to the legacy wick engine — the round-6 close-mode
+    # default has its own tests below
+    config.stop_trigger_mode = "wick"
+    config.trail_atr_mode = "frozen"
     pt.positions = {}
     pt.history = []
 
@@ -730,6 +755,31 @@ def test_check_entries_sunday_skip(config):
     assert {"SUNUSDT", "MONUSDT"} <= {s["symbol"] for s in signals}
 
 
+def test_check_entries_exclude_symbols(config):
+    """EXCLUDE_SYMBOLS entries never generate signals (BTCUSDT: the 0.001-lot
+    minimum cannot fit the account, but the virtual slot was still consumed).
+    The symbol must still be scannable for the regime/breadth gates — the
+    exclusion only applies at signal level."""
+    scanner = CryptoScanner(config)
+    md = _entry_md("BTCUSDT", pd.Timestamp("2026-08-31 16:00"), 0.55)
+    md["symbols"]["ALTUSDT"] = {
+        "close": 100.0, "ema200": 90.0, "atr": 2.0,
+        "supertrend_value": 95.0, "dir": 1, "flip": 1,
+        "flip_candle_open": pd.Timestamp("2026-08-31 16:00"),
+        "candle_time": "2026-08-31T20:00:00+00:00",
+    }
+
+    config.exclude_symbols = {"BTCUSDT"}
+    signals = scanner.check_entries(md, [], [])
+    syms = {s["symbol"] for s in signals}
+    assert "BTCUSDT" not in syms, "excluded symbol must not signal"
+    assert "ALTUSDT" in syms, "other symbols unaffected"
+
+    config.exclude_symbols = set()
+    signals = scanner.check_entries(md, [], [])
+    assert {"BTCUSDT", "ALTUSDT"} <= {s["symbol"] for s in signals}
+
+
 def test_check_entries_breadth_gate(config):
     """Round-5b: NO entries at all while breadth is below BREADTH_GATE,
     regardless of any symbol's signal."""
@@ -740,7 +790,7 @@ def test_check_entries_breadth_gate(config):
     md = _entry_md("GATEUSDT", pd.Timestamp("2026-08-31 16:00"), 0.10)
     assert scanner.check_entries(md, [], []) == []
 
-    md["breadth"] = 0.20   # above the gate, below the sizing threshold
+    md["breadth"] = 0.20   # above the gate, below the risk-level threshold
     signals = scanner.check_entries(md, [], [])
     assert len(signals) == 1
     assert signals[0]["risk_level"] == "half"
@@ -815,3 +865,127 @@ def test_quality_filter_default_trades_ab_only(config):
 
     config.quality_tiers = {"A", "B", "C", "D"}
     assert len(scanner.check_entries(_md("BTCUSDT", "SELL", 0.55), [], [])) == 1
+
+
+# ─── Round-6 exit engine: close trigger + rolling ATR + disaster net ─────
+
+
+def test_close_mode_ignores_wick_and_exits_on_close(config):
+    """Round-6 default: a wick through the chandelier must NOT exit; only a
+    committed close beyond the level does, filling at that close. This is
+    the behavior that would have kept SYRUP open through the 2026-09-28
+    wick while a close-only exit took ETHFI out."""
+    pt = PositionTracker.__new__(PositionTracker)
+    pt.config = config   # fresh Config(): close trigger + rolling trail
+    pt.positions = {}
+    pt.history = []
+
+    n = 4
+    base = pd.date_range("2026-08-01", periods=n, freq="4h")
+    df = pd.DataFrame({
+        "open":  [100.0, 101.0, 101.0, 90.0],
+        "high":  [101.0, 102.0, 102.0, 91.0],
+        "low":   [99.0, 100.0, 80.0, 88.0],   # bar 2 wicks far below the stop
+        "close": [100.5, 101.5, 101.5, 89.0],  # and CLOSES fully back above it
+        "volume": np.full(n, 1.0),
+        "close_time": base,
+    }, index=base)
+    df["supertrend_dir"] = np.array([1] * n)
+
+    pt.positions["WUSDT"] = {
+        "symbol": "WUSDT", "direction": "BUY",
+        "entry": 100.0, "atr_entry": 2.0,
+        "entry_bar_open": base[0].isoformat(),
+        "entry_time": base[0].isoformat(),
+        "interval": "4h",
+        "initial_stop": 90.0, "trail_stop": 90.0,
+        "entry_anchored": True,
+        "params": {},
+    }
+    # scan 1: bars 0-2 — bar 2's low (80) pierces the stop but the close
+    # (101.5) recovers fully above it -> no exit
+    exits, _ = pt.process_exits({
+        "interval": "4h", "btc_dir": 1, "breadth": 0.5,
+        "symbols": {"WUSDT": {"df": df.iloc[:3]}}})
+    assert exits == [], "wick through the stop must not exit in close mode"
+    assert "WUSDT" in pt.positions
+    # scan 2: bar 3 CLOSES at 89.0, below the ratcheted chandelier ->
+    # exit at that close
+    exits, _ = pt.process_exits({
+        "interval": "4h", "btc_dir": 1, "breadth": 0.5,
+        "symbols": {"WUSDT": {"df": df}}})
+    assert len(exits) == 1
+    assert exits[0]["exit_reason"] == "stop"
+    assert abs(exits[0]["exit"] - 89.0) < 1e-9
+    assert "WUSDT" not in pt.positions
+
+
+def test_rolling_trail_ratchets_with_current_atr(config):
+    """The round-6 chandelier ratchets from the CURRENT ATR(TRAIL_ATR_PERIOD)
+    each bar — not the ATR frozen at the entry signal."""
+    pt = PositionTracker.__new__(PositionTracker)
+    pt.config = config
+    pt.positions = {}
+    pt.history = []
+
+    n = 6
+    base = pd.date_range("2026-08-01", periods=n, freq="4h")
+    closes = [100.5, 105.0, 108.0, 110.0, 112.0, 114.0]
+    df = pd.DataFrame({
+        "open":  [c - 0.3 for c in closes],
+        "high":  [c + 0.5 for c in closes],
+        "low":   [c - 1.0 for c in closes],
+        "close": closes,
+        "volume": np.full(n, 1.0),
+        "close_time": base,
+    }, index=base)
+    df["supertrend_dir"] = 1
+
+    pt.positions["RUSDT"] = {
+        "symbol": "RUSDT", "direction": "BUY",
+        "entry": 100.0, "atr_entry": 5.0,   # frozen mode would keep using 5.0
+        "entry_bar_open": base[0].isoformat(),
+        "entry_time": base[0].isoformat(),
+        "interval": "4h",
+        "initial_stop": 85.0, "trail_stop": 85.0,
+        "entry_anchored": True,
+        "params": {},
+    }
+    exits, _ = pt.process_exits({
+        "interval": "4h", "btc_dir": 1, "breadth": 0.5,
+        "symbols": {"RUSDT": {"df": df}}})
+    assert exits == []
+    tr = pd.concat([df["high"] - df["low"],
+                    (df["high"] - df["close"].shift(1)).abs(),
+                    (df["low"] - df["close"].shift(1)).abs()],
+                   axis=1).max(axis=1)
+    atr14 = tr.ewm(com=13, adjust=False).mean()
+    expected = max(85.0, max(float(c - 3.5 * a) for c, a in zip(closes, atr14)))
+    assert abs(pt.positions["RUSDT"]["trail_stop"] - expected) < 1e-9
+    # and it must differ from the frozen-ATR ratchet (114 - 3.5*5 = 96.5)
+    assert abs(pt.positions["RUSDT"]["trail_stop"] - (114.0 - 3.5 * 5.0)) > 1e-6
+
+
+def test_open_position_persists_disaster_stop(config, synthetic_signal):
+    """Every new position carries a static disaster stop:
+    entry - min(mult xATR, cap x price) — and snapshots the exit config."""
+    pt = PositionTracker.__new__(PositionTracker)
+    pt.config = config
+    pt.positions = {}
+    pt.history = []
+    pos = pt.open_position(synthetic_signal)
+    assert pos is not None
+    expected = 65000.0 - min(6.0 * 1500.0, 0.12 * 65000.0)   # -> 57200.0
+    assert abs(pos["disaster_stop"] - expected) < 1e-6
+    assert pos["params"]["stop_trigger_mode"] == "close"
+    assert pos["params"]["trail_atr_mode"] == "rolling"
+    assert pos["params"]["trail_atr_period"] == 14
+
+
+def test_round6_config_defaults(config):
+    """The round-6 knobs exist and default to the deployed values."""
+    assert config.stop_trigger_mode == "close"
+    assert config.trail_atr_mode == "rolling"
+    assert config.trail_atr_period == 14
+    assert config.disaster_stop_mult == pytest.approx(6.0)
+    assert config.disaster_stop_cap == pytest.approx(0.12)

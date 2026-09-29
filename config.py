@@ -73,6 +73,39 @@ class Config:
             logger.warning("Invalid INITIAL_STOP_ATR_MULT, using default 3.0")
             self.initial_stop_atr_mult = 3.0
 
+        # ─── Round-6 exit engine (REPORT §6h, Sep 2026) ──────────────────
+        # STOP_TRIGGER_MODE: 'close' — the chandelier exits only when a bar
+        # CLOSES beyond the level (wick-tolerant; the exit fills at that
+        # close during the scan, +slippage via COST_RT). 'wick' — the legacy
+        # intrabar low/high trigger with gap-through fills at the open.
+        self.stop_trigger_mode = os.getenv("STOP_TRIGGER_MODE", "close").strip().lower()
+        if self.stop_trigger_mode not in ("close", "wick"):
+            logger.warning("Invalid STOP_TRIGGER_MODE %r — using 'close'",
+                           self.stop_trigger_mode)
+            self.stop_trigger_mode = "close"
+        # TRAIL_ATR_MODE: 'rolling' — the chandelier ratchets from the
+        # CURRENT ATR(TRAIL_ATR_PERIOD) each bar; 'frozen' — ATR frozen at
+        # the entry signal (legacy behavior).
+        self.trail_atr_mode = os.getenv("TRAIL_ATR_MODE", "rolling").strip().lower()
+        if self.trail_atr_mode not in ("rolling", "frozen"):
+            logger.warning("Invalid TRAIL_ATR_MODE %r — using 'rolling'",
+                           self.trail_atr_mode)
+            self.trail_atr_mode = "rolling"
+        try:
+            self.trail_atr_period = int(os.getenv("TRAIL_ATR_PERIOD", "14"))
+        except ValueError:
+            logger.warning("Invalid TRAIL_ATR_PERIOD, using default 14")
+            self.trail_atr_period = 14
+        # Disaster net: a STATIC resting exchange stop that pairs with the
+        # close-trigger mode (the chandelier itself is only evaluated at
+        # scan time). Bounds the intrabar tail and the between-scans window
+        # (network outages). Distance = min(mult x ATR_entry, cap x entry);
+        # 0 disables the net — pure close-stop, positions run unprotected
+        # between scans (backtest: +1401% with the net vs +1944% without,
+        # REPORT §6h — not recommended live).
+        self.disaster_stop_mult = self._get_float("DISASTER_STOP_MULT", 6.0)
+        self.disaster_stop_cap = self._get_float("DISASTER_STOP_CAP", 0.12)
+
         try:
             self.atr_min_pct = float(os.getenv("ATR_MIN_PCT", "0.4"))
         except ValueError:
@@ -146,27 +179,11 @@ class Config:
         self.futures_base_url = os.getenv(
             "FUTURES_BASE_URL", "https://fapi.binance.com").rstrip("/")
         # Margin committed per position in USDT; notional = margin × leverage
-        # ($1 × 5x = $5 notional = the exchange minimum on most pairs).
-        self.execution_margin_usdt = self._get_float("EXECUTION_MARGIN_USDT", 1.0)
+        # ($4 × 5x = $20 notional, comfortably above the $5 exchange floor).
+        self.execution_margin_usdt = self._get_float("EXECUTION_MARGIN_USDT", 4.0)
         self.execution_leverage = min(5, max(1, self._get_int(
             "EXECUTION_LEVERAGE", 5)))
-        self.execution_max_positions = self._get_int("EXECUTION_MAX_POSITIONS", 15)
-        # Position sizing for live execution:
-        #   auto    - percent risk when the account can express it, else the
-        #             fixed EXECUTION_MARGIN_USDT margin (default; transitions
-        #             on its own as the account grows past ~$85)
-        #   percent - strictly risk risk_pct of equity per trade; trades are
-        #             SKIPPED when the account is too small to express it
-        #   fixed   - always EXECUTION_MARGIN_USDT margin per trade
-        self.execution_sizing = os.getenv("EXECUTION_SIZING", "auto").strip().lower()
-        if self.execution_sizing not in ("auto", "percent", "fixed"):
-            logger.warning("Invalid EXECUTION_SIZING %r - using 'auto'",
-                           self.execution_sizing)
-            self.execution_sizing = "auto"
-        # Equity to assume when no API keys are available (dry-run previews
-        # without keys). 0 = unknown.
-        self.execution_equity_override = self._get_float(
-            "EXECUTION_EQUITY_OVERRIDE", 0.0)
+        self.execution_max_positions = self._get_int("EXECUTION_MAX_POSITIONS", 25)
 
         try:
             self.candle_fetch_limit = int(os.getenv("CANDLE_FETCH_LIMIT", "600"))
@@ -183,11 +200,20 @@ class Config:
             self.signal_cooldown_hours = 4
 
         # ─── Portfolio risk caps ─────────────────────────────────────────
-        # The backtest risks a fixed fraction of equity per trade (full risk
-        # when breadth >= threshold, half below it). These mirror that.
+        # The backtest sized positions from breadth (full exposure when
+        # breadth >= threshold, half below it); live execution now commits
+        # a fixed EXECUTION_MARGIN_USDT margin per trade instead.
         self.max_open_positions = self._get_int("MAX_OPEN_POSITIONS", 10)
-        self.risk_pct_full = self._get_float("RISK_PCT_FULL", 1.0)
-        self.risk_pct_half = self._get_float("RISK_PCT_HALF", 0.5)
+        # Symbols that never generate entries (they still count toward the
+        # breadth/regime gates). BTCUSDT by default in .env: its 0.001-lot
+        # minimum is far above this account's per-position notional, so an
+        # executed entry is impossible — but the virtual slot was still
+        # consumed, quietly shrinking real exposure.
+        self.exclude_symbols = {
+            s.strip().upper()
+            for s in os.getenv("EXCLUDE_SYMBOLS", "").split(",")
+            if s.strip()
+        }
 
         # ─── Operations ──────────────────────────────────────────────────
         # Alert when an open position's symbol stops appearing in the scan
@@ -213,6 +239,10 @@ class Config:
                 "RSI_LONG_THRESHOLD", "RSI_SHORT_THRESHOLD", "RR_MULTIPLIER",
                 "EMA_FAST", "EMA_SLOW", "EMA_TREND", "HTF_EMA",
                 "EMA_ATR_PERIOD",
+                # Retired with percent-based sizing: live execution now
+                # always commits a fixed EXECUTION_MARGIN_USDT margin.
+                "EXECUTION_SIZING", "EXECUTION_EQUITY_OVERRIDE",
+                "RISK_PCT_FULL", "RISK_PCT_HALF",
             )
             if os.getenv(k) is not None
         ]
